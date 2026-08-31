@@ -13,8 +13,10 @@ function showMessage(text, type) {
 }
 
 function isValidBeninPhone(value) {
-  const digits = value.replace(/\D/g, '');
-  return digits.length === 8 || (digits.length === 11 && digits.startsWith('229'));
+  let digits = value.replace(/\D/g, '');
+  if (digits.startsWith('229')) digits = digits.slice(3);
+  // Ancien format (8 chiffres) ou nouveau format depuis le 30/11/2024 (01 + 8 chiffres)
+  return digits.length === 8 || (digits.length === 10 && digits.startsWith('01'));
 }
 
 function sleep(ms) {
@@ -46,7 +48,9 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   messageBox.className = 'message';
 
+  const senderOperator = document.getElementById('senderOperator').value;
   const senderPhone = document.getElementById('senderPhone').value.trim();
+  const receiverOperator = document.getElementById('receiverOperator').value;
   const receiverPhone = document.getElementById('receiverPhone').value.trim();
   const amount = document.getElementById('amount').value.trim();
 
@@ -67,7 +71,7 @@ form.addEventListener('submit', async (event) => {
     const response = await fetch('/api/transfer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ senderPhone, receiverPhone, amount }),
+      body: JSON.stringify({ senderOperator, senderPhone, receiverOperator, receiverPhone, amount }),
     });
 
     const data = await response.json();

@@ -77,15 +77,17 @@
     .badge--mtn { background: var(--mtn); color: #16241f; }
     .badge--moov { background: var(--moov); color: #fff; }
 
-    input {
+    input, select {
       width: 100%;
       padding: 11px 12px;
       border: 1px solid var(--line);
       border-radius: 7px;
       font-size: 0.95rem;
       background: #fbfaf6;
+      font-family: inherit;
+      color: inherit;
     }
-    input:focus {
+    input:focus, select:focus {
       outline: 2px solid var(--moov);
       outline-offset: 1px;
     }
@@ -123,18 +125,34 @@
     <div class="card__band"></div>
     <div class="card__body">
       <h1>Envoyer de l'argent</h1>
-      <p class="subtitle">Transfert entre comptes Mobile Money béninois via SebPay.</p>
+      <p class="subtitle">Transfert entre comptes Mobile Money béninois via SebPay (MTN et Moov, dans les deux sens).</p>
 
       <form id="transfer-form">
         <div class="field">
-          <label for="senderPhone">Votre numéro <span class="badge badge--mtn">MTN</span></label>
-          <input type="tel" id="senderPhone" name="senderPhone" placeholder="90 12 34 56" required />
+          <label for="senderOperator">Réseau expéditeur</label>
+          <select id="senderOperator" name="senderOperator" required>
+            <option value="mtn">MTN</option>
+            <option value="moov">Moov</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="senderPhone">Votre numéro</label>
+          <input type="tel" id="senderPhone" name="senderPhone" placeholder="01 90 12 34 56" required />
           <p class="hint">Le compte qui envoie l'argent.</p>
         </div>
 
         <div class="field">
-          <label for="receiverPhone">Numéro du destinataire <span class="badge badge--moov">Moov</span></label>
-          <input type="tel" id="receiverPhone" name="receiverPhone" placeholder="94 12 34 56" required />
+          <label for="receiverOperator">Réseau destinataire</label>
+          <select id="receiverOperator" name="receiverOperator" required>
+            <option value="moov">Moov</option>
+            <option value="mtn">MTN</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="receiverPhone">Numéro du destinataire</label>
+          <input type="tel" id="receiverPhone" name="receiverPhone" placeholder="01 94 12 34 56" required />
           <p class="hint">Le compte qui reçoit l'argent.</p>
         </div>
 
