@@ -21,7 +21,7 @@ const config = {
     secretKey: 'sk_live_w6OsteIR8i0Q4mQImeN67irPGUtCSjbYAk6VU6fbpX1lch4ULPrdr5dcD8zt',
 
     // URL publique de votre service Render, utilisée pour construire callback_url
-    publicBaseUrl: process.env.PUBLIC_BASE_URL || 'https://VOTRE-SERVICE.onrender.com',
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || 'https://ma-boutique-ngu0.onrender.com',
   },
 };
 
