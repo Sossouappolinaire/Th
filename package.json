@@ -1,0 +1,16 @@
+{
+  "name": "sebpay-transfert-bj",
+  "version": "1.0.0",
+  "description": "Transfert d'argent MTN <-> Moov au Benin via l'API SebPay (collecte + payout)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
+  }
+}
