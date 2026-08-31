@@ -20,6 +20,7 @@
       margin: 0;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       background: var(--paper);
@@ -118,9 +119,50 @@
     }
     .message--success { display: block; background: #e5f3ea; color: #1e5631; }
     .message--error { display: block; background: #fbe9e7; color: var(--error); }
+
+    .summary {
+      margin-top: 10px;
+      padding: 0;
+      list-style: none;
+    }
+    .summary li {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 5px 0;
+      border-bottom: 1px dashed rgba(22, 36, 31, 0.12);
+      font-size: 0.83rem;
+    }
+    .summary li:last-child { border-bottom: none; }
+    .summary .k { color: #4b5a53; }
+    .summary .v { font-weight: 600; text-align: right; word-break: break-all; }
+
+    .topbar {
+      display: flex;
+      justify-content: flex-end;
+      max-width: 420px;
+      width: 100%;
+      margin: 0 auto 10px;
+    }
+    .admin-link {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: #5c6b64;
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 6px 10px;
+      border-radius: 6px;
+      width: auto;
+    }
+    .admin-link:hover { color: var(--ink); border-color: var(--ink); }
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <a href="/admin.html" class="admin-link">ADMIN</a>
+  </div>
   <main class="card">
     <div class="card__band"></div>
     <div class="card__body">
@@ -165,6 +207,7 @@
       </form>
 
       <div id="message" class="message"></div>
+      <ul id="summary" class="summary"></ul>
     </div>
   </main>
 

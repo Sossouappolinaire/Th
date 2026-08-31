@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin · Paiements en attente | Bénin</title>
+  <style>
+    :root {
+      --ink: #16241f;
+      --paper: #f5f1e8;
+      --mtn: #ffcc00;
+      --moov: #005baa;
+      --line: #d8d0bd;
+      --error: #b3261e;
+      --success: #1e5631;
+      --pending: #8a6d1a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--paper);
+      font-family: 'Segoe UI', Roboto, -apple-system, sans-serif;
+      color: var(--ink);
+      padding: 24px;
+    }
+
+    .wrap { max-width: 920px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    header .band {
+      height: 6px;
+      background: linear-gradient(90deg, var(--mtn) 0 50%, var(--moov) 50% 100%);
+      border-radius: 4px;
+      position: absolute;
+      top: 0; left: 0; right: 0;
+    }
+
+    h1 { font-size: 1.25rem; margin: 0; letter-spacing: -0.01em; }
+    .subtitle { margin: 2px 0 0; font-size: 0.85rem; color: #5c6b64; }
+
+    a.back {
+      font-size: 0.8rem;
+      color: #5c6b64;
+      text-decoration: none;
+    }
+    a.back:hover { color: var(--ink); }
+
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .panel h2 {
+      font-size: 0.95rem;
+      margin: 0 0 4px;
+    }
+    .panel .hint {
+      font-size: 0.78rem;
+      color: #8a8577;
+      margin: 0 0 14px;
+    }
+
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row input[type="text"], .row input[type="password"] {
+      flex: 1;
+      min-width: 160px;
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-size: 0.9rem;
+      background: #fbfaf6;
+      color: inherit;
+      font-family: inherit;
+    }
+
+    button {
+      border: none;
+      border-radius: 7px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 10px 16px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:not(:disabled):hover { background: #263a31; }
+    button.secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+    button.secondary:not(:disabled):hover { border-color: var(--ink); }
+    button.danger { background: var(--error); }
+    button.danger:not(:disabled):hover { background: #8f1e17; }
+    button.success { background: var(--success); }
+    button.success:not(:disabled):hover { background: #163f24; }
+
+    .status-line {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      padding: 10px 12px;
+      border-radius: 7px;
+      display: none;
+    }
+    .status-line--info { display: block; background: #eef1ee; color: var(--ink); }
+    .status-line--success { display: block; background: #e5f3ea; color: var(--success); }
+    .status-line--error { display: block; background: #fbe9e7; color: var(--error); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #8a8577; font-weight: 700; }
+    td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.78rem; word-break: break-all; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+    }
+    .pill--collection { background: #fff6d9; color: var(--pending); }
+    .pill--payout { background: #e3ecf7; color: var(--moov); }
+    .pill--refund { background: #fde8e6; color: var(--error); }
+
+    .actions { display: flex; flex-direction: column; gap: 6px; min-width: 210px; }
+    .actions .row2 { display: flex; gap: 6px; }
+    .actions button { padding: 7px 10px; font-size: 0.75rem; }
+
+    .empty { padding: 24px 8px; text-align: center; color: #8a8577; font-size: 0.85rem; }
+
+    .locked { text-align: center; padding: 40px 10px; }
+    .locked p { color: #5c6b64; font-size: 0.88rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Paiements en attente</h1>
+        <p class="subtitle">Panneau ADMIN — SebPay MTN ↔ Moov</p>
+      </div>
+      <a class="back" href="/index.html">&larr; Retour à l'envoi</a>
+    </header>
+
+    <div id="gate" class="panel locked">
+      <p>Entrez le mot de passe administrateur pour accéder au panneau.</p>
+      <div class="row" style="max-width:360px;margin:0 auto;">
+        <input type="password" id="tokenInput" placeholder="Mot de passe" />
+        <button id="tokenSubmit">Entrer</button>
+      </div>
+      <div id="gateStatus" class="status-line"></div>
+    </div>
+
+    <div id="app" style="display:none;">
+      <div class="panel">
+        <h2>Traiter un paiement bloqué</h2>
+        <p class="hint">Saisissez la référence du transfert : elle est vérifiée auprès de SebPay. S'il est toujours en attente, vous pourrez l'annuler (renvoi à l'émetteur) ou réessayer l'envoi (sans ressaisir le montant).</p>
+        <div class="row">
+          <input type="text" id="refInput" placeholder="Ex : TRF-1730000000000" />
+          <button id="refCheckBtn">Vérifier</button>
+        </div>
+        <div id="refStatus" class="status-line"></div>
+        <div id="refActions" class="row" style="margin-top:10px; display:none;">
+          <button class="danger" id="refCancelBtn">Annuler (renvoyer à l'émetteur)</button>
+          <button class="success" id="refRetryBtn">Réessayer l'envoi</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="row" style="justify-content: space-between; align-items:center;">
+          <div>
+            <h2>Tous les paiements en attente</h2>
+            <p class="hint" style="margin-bottom:0;">Rattrape automatiquement les webhooks manqués (déclenche l'envoi si la collecte était en fait approuvée, etc.).</p>
+          </div>
+          <div class="row" style="width:auto;">
+            <button class="secondary" id="refreshBtn">Actualiser</button>
+            <button id="fixAllBtn">Corriger tout</button>
+          </div>
+        </div>
+        <div id="fixStatus" class="status-line"></div>
+        <div id="tableWrap" style="margin-top:14px; overflow-x:auto;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

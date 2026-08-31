@@ -6,10 +6,45 @@
 const form = document.getElementById('transfer-form');
 const submitBtn = document.getElementById('submit-btn');
 const messageBox = document.getElementById('message');
+const summaryBox = document.getElementById('summary');
 
 function showMessage(text, type) {
   messageBox.textContent = text;
   messageBox.className = `message message--${type}`;
+}
+
+function formatOperator(op) {
+  return op === 'mtn' ? 'MTN' : op === 'moov' ? 'Moov' : op || '—';
+}
+
+function formatAmount(amount) {
+  return `${Number(amount).toLocaleString('fr-FR')} FCFA`;
+}
+
+/** Affiche le résumé détaillé (référence, montant, numéros, ids de
+ * transaction) une fois le transfert terminé (réussi, échoué ou remboursé). */
+function showSummary(transfer) {
+  if (!transfer) {
+    summaryBox.innerHTML = '';
+    return;
+  }
+
+  const rows = [
+    ['Référence', transfer.reference],
+    ['Statut', transfer.status],
+    ['Expéditeur', `${transfer.senderPhone || '—'} (${formatOperator(transfer.senderOperator)})`],
+    ['Destinataire', `${transfer.receiverPhone || '—'} (${formatOperator(transfer.receiverOperator)})`],
+    ['Montant', formatAmount(transfer.amount)],
+    ['Réf. collecte', transfer.collectionTransactionId || '—'],
+    ['Réf. décaissement', transfer.payoutTransactionId || '—'],
+  ];
+
+  summaryBox.innerHTML = rows
+    .map(
+      ([label, value]) =>
+        `<li><span class="k">${label}</span><span class="v">${String(value).replace(/</g, '&lt;')}</span></li>`
+    )
+    .join('');
 }
 
 function isValidBeninPhone(value) {
@@ -34,6 +69,7 @@ async function pollTransfer(reference, { intervalMs = 3000, timeoutMs = 120000 }
       const { status, message } = data.transfer;
       showMessage(message, status === 'failed' ? 'error' : 'success');
       if (status === 'completed' || status === 'failed') {
+        showSummary(data.transfer);
         return status;
       }
     }
@@ -47,6 +83,7 @@ async function pollTransfer(reference, { intervalMs = 3000, timeoutMs = 120000 }
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   messageBox.className = 'message';
+  showSummary(null);
 
   const senderOperator = document.getElementById('senderOperator').value;
   const senderPhone = document.getElementById('senderPhone').value.trim();
