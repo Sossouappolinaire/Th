@@ -67,8 +67,8 @@ async function pollTransfer(reference, { intervalMs = 3000, timeoutMs = 120000 }
 
     if (data.success) {
       const { status, message } = data.transfer;
-      showMessage(message, status === 'failed' ? 'error' : 'success');
-      if (status === 'completed' || status === 'failed') {
+      showMessage(message, status === 'failed' || status === 'blocked' ? 'error' : 'success');
+      if (status === 'completed' || status === 'failed' || status === 'blocked') {
         showSummary(data.transfer);
         return status;
       }
@@ -96,8 +96,10 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  if (!amount || Number(amount) <= 0) {
-    showMessage('Veuillez saisir un montant valide.', 'error');
+  const MIN_PAYOUT_AMOUNT_XOF = 300; // doit rester synchronisé avec server.js
+
+  if (!amount || Number(amount) < MIN_PAYOUT_AMOUNT_XOF) {
+    showMessage(`Le montant minimum autorisé est de ${MIN_PAYOUT_AMOUNT_XOF} FCFA (minimum SebPay pour tout décaissement).`, 'error');
     return;
   }
 

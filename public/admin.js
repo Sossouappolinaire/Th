@@ -58,7 +58,10 @@ function formatDate(iso) {
   }
 }
 
-function stagePill(stage) {
+function stagePill(stage, status) {
+  if (status === 'blocked') {
+    return `<span class="pill pill--blocked">Bloqué (collecté, non envoyé)</span>`;
+  }
   const label = stage === 'collection' ? 'Collecte' : stage === 'payout' ? 'Décaissement' : 'Remboursement';
   return `<span class="pill pill--${stage}">${label}</span>`;
 }
@@ -148,15 +151,19 @@ function renderRefTransfer(transfer) {
     ? 'success'
     : transfer.status === 'failed'
     ? 'error'
+    : transfer.status === 'blocked'
+    ? 'warning'
     : 'info';
 
   setStatus(refStatus, lines.join(' · '), type);
 
-  if (transfer.status === 'pending' && (transfer.stage === 'payout' || transfer.stage === 'refund')) {
-    refActions.style.display = 'flex';
-  } else {
-    refActions.style.display = 'none';
-  }
+  // Actionnable si : payout/refund encore pending, OU collecte réussie mais
+  // envoi au destinataire resté coincé ('blocked' — voir server.js).
+  const isActionable =
+    (transfer.status === 'pending' && (transfer.stage === 'payout' || transfer.stage === 'refund')) ||
+    transfer.status === 'blocked';
+
+  refActions.style.display = isActionable ? 'flex' : 'none';
 }
 
 refCheckBtn.addEventListener('click', async () => {
@@ -256,11 +263,11 @@ function renderPending(transfers) {
 
   const rows = transfers
     .map((t) => {
-      const canAct = t.stage === 'payout' || t.stage === 'refund';
+      const canAct = t.stage === 'payout' || t.stage === 'refund' || t.status === 'blocked';
       return `
         <tr data-ref="${t.reference}">
           <td class="mono">${t.reference}</td>
-          <td>${stagePill(t.stage)}</td>
+          <td>${stagePill(t.stage, t.status)}</td>
           <td>${t.senderPhone}<br><span style="color:#8a8577">${formatOperator(t.senderOperator)}</span></td>
           <td>${t.receiverPhone}<br><span style="color:#8a8577">${formatOperator(t.receiverOperator)}</span></td>
           <td>${formatAmount(t.amount)}</td>
