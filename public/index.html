@@ -427,9 +427,9 @@
         <p class="lede">Choisissez le type de transfert pour commencer.</p>
         <div class="choice-grid">
           <button type="button" class="choice-tile" data-type="national">
-            <span class="choice-tile__flag">🇧🇯</span>
+            <span class="choice-tile__flag">🏠</span>
             <span class="choice-tile__title">National</span>
-            <span class="choice-tile__sub">Vers un numéro au Bénin</span>
+            <span class="choice-tile__sub">Même pays des deux côtés</span>
           </button>
           <button type="button" class="choice-tile" data-type="international">
             <span class="choice-tile__flag">🌍</span>
@@ -440,15 +440,39 @@
       </section>
 
       <section class="panel" data-panel="2" hidden>
-        <h1>Votre numéro</h1>
-        <p class="lede">Le compte Mobile Money béninois qui paie l'envoi.</p>
+        <h1 id="senderTitle">D'où envoyez-vous l'argent ?</h1>
+        <p class="lede" id="senderLede">Choisissez votre pays, votre réseau, puis votre numéro.</p>
+
+        <div class="field" id="senderCountryField">
+          <label>Votre pays</label>
+          <button type="button" id="senderCountryTrigger" class="country-trigger" aria-expanded="false">
+            <span id="senderCountryTriggerLabel" class="country-trigger__placeholder">Choisir un pays</span>
+            <svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <ul id="senderCountryList" class="country-list" hidden></ul>
+        </div>
+
         <div class="field">
-          <label>Votre numéro <span id="senderBadge" class="op-badge" hidden></span></label>
+          <label>Votre réseau</label>
+          <div id="senderOperatorChips" class="chip-row"><span class="chip-empty">Choisissez d'abord un pays.</span></div>
+        </div>
+
+        <div class="field">
+          <label>Votre numéro</label>
           <div class="phone-input">
-            <span class="phone-input__code">+229</span>
+            <span class="phone-input__code" id="senderDialCode">+—</span>
             <input type="tel" id="senderPhone" inputmode="numeric" placeholder="90 12 34 56" autocomplete="off" />
           </div>
         </div>
+
+        <div class="field" id="senderOtpField" hidden>
+          <label>Code de confirmation (OTP)</label>
+          <p class="lede" id="senderOtpHint" style="margin:0 0 8px;"></p>
+          <div class="phone-input">
+            <input type="tel" id="senderOtpCode" inputmode="numeric" placeholder="Code reçu par USSD" autocomplete="off" />
+          </div>
+        </div>
+
         <div class="panel__nav">
           <button type="button" class="btn-secondary" data-back>Retour</button>
           <button type="button" class="btn-primary" data-next disabled>Continuer</button>

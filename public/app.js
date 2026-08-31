@@ -4,6 +4,11 @@
 // peupler les pays/réseaux, puis soumet /api/transfer et suit le statut par
 // polling jusqu'à confirmation. N'appelle jamais SebPay directement : passe
 // toujours par notre backend, qui seul détient les clés API.
+//
+// Depuis le 01/09/2026 : l'expéditeur n'est plus figé sur le Bénin — il
+// choisit son pays exactement comme le destinataire (pays -> réseau ->
+// numéro), avec en plus un champ OTP quand le réseau choisi l'exige
+// (Orange BF/CI/SN à ce jour, voir countries.js -> otpRequired).
 
 const MIN_PAYOUT_AMOUNT_XOF = 300; // doit rester synchronisé avec server.js
 const PLATFORM_FEE_PERCENT = 5; // doit rester synchronisé avec config.js -> fees.platformFeePercent
@@ -26,9 +31,19 @@ const lines = [...document.querySelectorAll('.steps__line')];
 
 const tiles = [...document.querySelectorAll('.choice-tile')];
 
+// --- Expéditeur (panneau 2) ---
+const senderCountryField = document.getElementById('senderCountryField');
+const senderCountryTrigger = document.getElementById('senderCountryTrigger');
+const senderCountryTriggerLabel = document.getElementById('senderCountryTriggerLabel');
+const senderCountryList = document.getElementById('senderCountryList');
+const senderOperatorChips = document.getElementById('senderOperatorChips');
+const senderDialCode = document.getElementById('senderDialCode');
 const senderInput = document.getElementById('senderPhone');
-const senderBadge = document.getElementById('senderBadge');
+const senderOtpField = document.getElementById('senderOtpField');
+const senderOtpHint = document.getElementById('senderOtpHint');
+const senderOtpInput = document.getElementById('senderOtpCode');
 
+// --- Destinataire (panneau 3) ---
 const destTitle = document.getElementById('destTitle');
 const destLede = document.getElementById('destLede');
 const countryField = document.getElementById('countryField');
@@ -47,21 +62,26 @@ const statusTrail = document.getElementById('statusTrail');
 
 let currentPanel = 1;
 let countriesData = [];
+let manualSenderOperatorPick = false;
 let manualOperatorPick = false;
 
 const state = {
-  type: null,        // 'national' | 'international'
-  country: 'BJ',      // code pays du destinataire
-  operator: null,     // slug réseau du destinataire
-  senderOperator: null,
+  type: null,           // 'national' | 'international'
+  senderCountry: null,  // code pays de l'expéditeur
+  senderOperator: null, // slug réseau de l'expéditeur
   senderPhone: '',
+  senderOtpCode: '',
+  country: null,        // code pays du destinataire
+  operator: null,       // slug réseau du destinataire
   receiverPhone: '',
   amount: '',
 };
 
 // ---------------------------------------------------------------------------
 // Détection réseau béninois côté client (miroir de sebpayService.js), pour
-// un retour visuel immédiat sans aller-retour serveur.
+// un retour visuel immédiat sans aller-retour serveur. Ne s'applique qu'au
+// Bénin : les autres pays n'ont pas de plan de numérotation par réseau
+// connu ici, l'utilisateur choisit son réseau lui-même (chips).
 // ---------------------------------------------------------------------------
 function bjLocalDigits(raw) {
   let digits = String(raw).replace(/\D/g, '');
@@ -116,6 +136,7 @@ function goToPanel(n) {
   lines.forEach((l) => {
     l.classList.toggle('is-filled', Number(l.dataset.line) < n);
   });
+  if (n === 3) setupDestinataireStep();
   if (n === 5) buildRecap();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -158,8 +179,7 @@ function playLoadingTransition(button, duration = 900) {
 }
 
 // Boutons "Continuer" (data-next) : jouent l'animation puis avancent d'un
-// panneau. (Corrige au passage le fait qu'ils étaient jusqu'ici inertes une
-// fois activés — seul le clic sur une tuile de l'étape 1 faisait avancer.)
+// panneau.
 document.querySelectorAll('.panel__nav [data-next]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     if (btn.disabled) return;
@@ -170,65 +190,222 @@ document.querySelectorAll('.panel__nav [data-next]').forEach((btn) => {
 
 // ---------------------------------------------------------------------------
 // Étape 1 — Type de transfert
+// National = expéditeur et destinataire dans LE MÊME pays (n'importe lequel).
+// International = deux pays différents. Comme le pays expéditeur n'est plus
+// figé sur le Bénin, on repart de zéro à chaque changement de type : le pays
+// destinataire ne peut être fixé qu'une fois le pays expéditeur connu (étape
+// suivante).
 // ---------------------------------------------------------------------------
+function resetCountryTrigger(triggerLabel, dialEl) {
+  triggerLabel.textContent = 'Choisir un pays';
+  triggerLabel.classList.add('country-trigger__placeholder');
+  if (dialEl) dialEl.textContent = '+—';
+}
+
 tiles.forEach((tile) => {
   tile.addEventListener('click', () => {
     state.type = tile.dataset.type;
-    manualOperatorPick = false;
-    state.operator = null;
 
-    if (state.type === 'national') {
-      state.country = 'BJ';
-      countryField.hidden = true;
-      destTitle.textContent = 'Qui reçoit l\u2019argent ?';
-      destLede.textContent = 'Numéro béninois du destinataire — le réseau est détecté automatiquement.';
-      receiverDialCode.textContent = '+229';
-      renderOperatorChips();
-    } else {
-      state.country = null;
-      countryField.hidden = false;
-      countryTriggerLabel.textContent = 'Choisir un pays';
-      countryTriggerLabel.classList.add('country-trigger__placeholder');
-      receiverDialCode.textContent = '+—';
-      destTitle.textContent = 'Vers quel pays ?';
-      destLede.textContent = 'Choisissez le pays, puis le réseau du destinataire.';
-      operatorChips.innerHTML = '<span class="chip-empty">Choisissez d\u2019abord un pays.</span>';
-    }
-    receiverInput.value = '';
+    state.senderCountry = null;
+    state.senderOperator = null;
+    state.senderPhone = '';
+    state.senderOtpCode = '';
+    manualSenderOperatorPick = false;
+    state.country = null;
+    state.operator = null;
     state.receiverPhone = '';
-    validateStep3();
+    manualOperatorPick = false;
+
+    senderInput.value = '';
+    senderOtpInput.value = '';
+    resetCountryTrigger(senderCountryTriggerLabel, senderDialCode);
+    senderOperatorChips.innerHTML = '<span class="chip-empty">Choisissez d\u2019abord un pays.</span>';
+    senderOtpField.hidden = true;
+
+    receiverInput.value = '';
+    resetCountryTrigger(countryTriggerLabel, receiverDialCode);
+    operatorChips.innerHTML = '<span class="chip-empty">Choisissez d\u2019abord un pays.</span>';
+
+    validateStep2();
     goToPanel(2);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Étape 2 — Expéditeur
+// Étape 2 — Expéditeur (pays + réseau + numéro + OTP éventuel)
 // ---------------------------------------------------------------------------
-function updateBadge(el, operator, countryCode) {
-  const op = operator ? findOperator(countryCode, operator) : null;
-  if (!op) {
-    el.hidden = true;
+function renderSenderCountryList() {
+  senderCountryList.innerHTML = countriesData
+    .map(
+      (c) => `<li data-code="${c.code}"><span class="flag">${c.flag}</span><span>${c.name}</span><span class="dial">+${c.dialCode}</span></li>`
+    )
+    .join('');
+
+  senderCountryList.querySelectorAll('li').forEach((li) => {
+    li.addEventListener('click', () => {
+      const code = li.dataset.code;
+      const country = findCountry(code);
+      state.senderCountry = code;
+      state.senderOperator = null;
+      manualSenderOperatorPick = false;
+      senderCountryTriggerLabel.textContent = `${country.flag} ${country.name}`;
+      senderCountryTriggerLabel.classList.remove('country-trigger__placeholder');
+      senderDialCode.textContent = `+${country.dialCode}`;
+      senderCountryList.hidden = true;
+      senderCountryTrigger.setAttribute('aria-expanded', 'false');
+      senderInput.value = '';
+      state.senderPhone = '';
+      renderSenderOperatorChips();
+      updateSenderOtpVisibility();
+      validateStep2();
+    });
+  });
+}
+
+senderCountryTrigger.addEventListener('click', () => {
+  const expanded = senderCountryTrigger.getAttribute('aria-expanded') === 'true';
+  senderCountryTrigger.setAttribute('aria-expanded', String(!expanded));
+  senderCountryList.hidden = expanded;
+});
+
+/** Initiales génériques pour l'icône d'un opérateur (pas de logo de marque
+ * déposée : juste un badge coloré avec 1-2 lettres, cohérent avec les
+ * couleurs déjà définies par opérateur dans countries.js). */
+function operatorInitials(name) {
+  const words = String(name).trim().split(/\s+/);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function applyChipSelected(chip, country) {
+  const op = country.operators.find((o) => o.slug === chip.dataset.slug);
+  chip.classList.add('is-selected');
+  chip.style.background = op.color;
+  chip.style.color = op.textColor;
+}
+function resetChip(chip) {
+  chip.classList.remove('is-selected');
+  chip.style.background = '';
+  chip.style.color = '';
+}
+
+function renderSenderOperatorChips() {
+  const country = findCountry(state.senderCountry);
+  if (!country) {
+    senderOperatorChips.innerHTML = '<span class="chip-empty">Choisissez d\u2019abord un pays.</span>';
     return;
   }
-  el.hidden = false;
-  el.textContent = op.name;
-  el.style.background = op.color;
-  el.style.color = op.textColor;
+  senderOperatorChips.innerHTML = country.operators
+    .map(
+      (op) =>
+        `<button type="button" class="chip" data-slug="${op.slug}">` +
+        `<span class="chip__icon" style="background:#fff;color:${op.color};border:1.5px solid ${op.color}">${operatorInitials(op.name)}</span>` +
+        `${op.name}</button>`
+    )
+    .join('');
+
+  senderOperatorChips.querySelectorAll('.chip').forEach((chip) => {
+    if (chip.dataset.slug === state.senderOperator) applyChipSelected(chip, country);
+    chip.addEventListener('click', () => {
+      manualSenderOperatorPick = true;
+      state.senderOperator = chip.dataset.slug;
+      senderOperatorChips.querySelectorAll('.chip').forEach((c) => resetChip(c));
+      applyChipSelected(chip, country);
+      updateSenderOtpVisibility();
+      validateStep2();
+    });
+  });
+}
+
+/** Affiche le champ OTP si le réseau expéditeur choisi l'exige (voir
+ * countries.js -> otpRequired), avec le code USSD à composer. */
+function updateSenderOtpVisibility() {
+  const op = findOperator(state.senderCountry, state.senderOperator);
+  if (op && op.otpRequired) {
+    senderOtpField.hidden = false;
+    senderOtpHint.textContent = `${op.name} exige un code de confirmation : composez ${op.ussdCode} sur ce téléphone, puis saisissez le code reçu ci-dessous.`;
+  } else {
+    senderOtpField.hidden = true;
+    state.senderOtpCode = '';
+    senderOtpInput.value = '';
+  }
 }
 
 senderInput.addEventListener('input', () => {
   state.senderPhone = senderInput.value.trim();
-  state.senderOperator = detectBjOperator(state.senderPhone);
-  updateBadge(senderBadge, state.senderOperator, 'BJ');
-  document.querySelector('[data-panel="2"] [data-next]').disabled = !isValidBjPhone(state.senderPhone);
+  if (state.senderCountry === 'BJ' && !manualSenderOperatorPick) {
+    const detected = detectBjOperator(state.senderPhone);
+    if (detected !== state.senderOperator) {
+      state.senderOperator = detected;
+      senderOperatorChips.querySelectorAll('.chip').forEach((c) => {
+        c.dataset.slug === detected ? applyChipSelected(c, findCountry('BJ')) : resetChip(c);
+      });
+      updateSenderOtpVisibility();
+    }
+  }
+  validateStep2();
 });
+
+senderOtpInput.addEventListener('input', () => {
+  state.senderOtpCode = senderOtpInput.value.trim();
+  validateStep2();
+});
+
+function validateStep2() {
+  const country = findCountry(state.senderCountry);
+  const phoneOk = country
+    ? country.code === 'BJ'
+      ? isValidBjPhone(state.senderPhone)
+      : isValidIntlPhone(state.senderPhone, country.dialCode, country.phoneDigits)
+    : false;
+  const op = findOperator(state.senderCountry, state.senderOperator);
+  const otpOk = !op || !op.otpRequired || state.senderOtpCode.length > 0;
+  document.querySelector('[data-panel="2"] [data-next]').disabled = !(state.senderOperator && phoneOk && otpOk);
+}
 
 // ---------------------------------------------------------------------------
 // Étape 3 — Destinataire (pays + réseau + numéro)
+// En national : même pays que l'expéditeur, pas de sélecteur pays.
+// En international : n'importe quel AUTRE pays que celui de l'expéditeur.
 // ---------------------------------------------------------------------------
+function setupDestinataireStep() {
+  if (state.type === 'national') {
+    countryField.hidden = true;
+    if (state.country !== state.senderCountry) {
+      state.country = state.senderCountry;
+      state.operator = null;
+      manualOperatorPick = false;
+      receiverInput.value = '';
+      state.receiverPhone = '';
+    }
+    const country = findCountry(state.country);
+    destTitle.textContent = 'Qui reçoit l\u2019argent ?';
+    destLede.textContent = country
+      ? `Numéro ${country.name} du destinataire — même pays que l\u2019expéditeur.`
+      : 'Numéro du destinataire.';
+    receiverDialCode.textContent = country ? `+${country.dialCode}` : '+—';
+    renderOperatorChips();
+  } else {
+    countryField.hidden = false;
+    destTitle.textContent = 'Vers quel pays ?';
+    destLede.textContent = 'Choisissez le pays, puis le réseau du destinataire.';
+    if (state.country === state.senderCountry) {
+      state.country = null;
+      state.operator = null;
+      manualOperatorPick = false;
+      resetCountryTrigger(countryTriggerLabel, receiverDialCode);
+      receiverInput.value = '';
+      state.receiverPhone = '';
+      operatorChips.innerHTML = '<span class="chip-empty">Choisissez d\u2019abord un pays.</span>';
+    }
+    renderCountryList();
+  }
+  validateStep3();
+}
+
 function renderCountryList() {
   countryList.innerHTML = countriesData
-    .filter((c) => !c.isHome)
+    .filter((c) => c.code !== state.senderCountry)
     .map(
       (c) => `<li data-code="${c.code}"><span class="flag">${c.flag}</span><span>${c.name}</span><span class="dial">+${c.dialCode}</span></li>`
     )
@@ -258,15 +435,6 @@ countryTrigger.addEventListener('click', () => {
   countryList.hidden = expanded;
 });
 
-/** Initiales génériques pour l'icône d'un opérateur (pas de logo de marque
- * déposée : juste un badge coloré avec 1-2 lettres, cohérent avec les
- * couleurs déjà définies par opérateur dans countries.js). */
-function operatorInitials(name) {
-  const words = String(name).trim().split(/\s+/);
-  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
-}
-
 function renderOperatorChips() {
   const country = findCountry(state.country);
   if (!country) {
@@ -292,18 +460,6 @@ function renderOperatorChips() {
       validateStep3();
     });
   });
-}
-
-function applyChipSelected(chip, country) {
-  const op = country.operators.find((o) => o.slug === chip.dataset.slug);
-  chip.classList.add('is-selected');
-  chip.style.background = op.color;
-  chip.style.color = op.textColor;
-}
-function resetChip(chip) {
-  chip.classList.remove('is-selected');
-  chip.style.background = '';
-  chip.style.color = '';
 }
 
 receiverInput.addEventListener('input', () => {
@@ -336,15 +492,15 @@ function validateStep3() {
 // ---------------------------------------------------------------------------
 amountInput.addEventListener('input', () => {
   state.amount = amountInput.value.trim();
-  const country = findCountry(state.country);
-  const op = country && state.operator ? country.operators.find((o) => o.slug === state.operator) : null;
+  const senderCountry = findCountry(state.senderCountry);
+  const receiverCountry = findCountry(state.country);
+  const op = receiverCountry && state.operator ? receiverCountry.operators.find((o) => o.slug === state.operator) : null;
   const valid = Number(state.amount) >= MIN_TRANSFER_AMOUNT_XOF;
 
   document.querySelector('[data-panel="4"] [data-next]').disabled = !valid;
 
-  if (country && op && state.amount) {
-    const originFlag = '🇧🇯';
-    routeSummary.innerHTML = `${originFlag} Bénin → ${country.flag} ${country.name} · <strong>${op.name}</strong> · ${Number(state.amount).toLocaleString('fr-FR')} FCFA`;
+  if (senderCountry && receiverCountry && op && state.amount) {
+    routeSummary.innerHTML = `${senderCountry.flag} ${senderCountry.name} → ${receiverCountry.flag} ${receiverCountry.name} · <strong>${op.name}</strong> · ${Number(state.amount).toLocaleString('fr-FR')} FCFA`;
   } else {
     routeSummary.textContent = '';
   }
@@ -354,16 +510,23 @@ amountInput.addEventListener('input', () => {
 // Étape 5 — Récapitulatif
 // ---------------------------------------------------------------------------
 function buildRecap() {
+  const senderCountry = findCountry(state.senderCountry);
   const country = findCountry(state.country);
   const op = country ? country.operators.find((o) => o.slug === state.operator) : null;
+  const senderOp = senderCountry ? senderCountry.operators.find((o) => o.slug === state.senderOperator) : null;
   const amount = Number(state.amount) || 0;
   const feeAmount = Math.round((amount * PLATFORM_FEE_PERCENT) / 100);
   const netAmount = amount - feeAmount;
 
   const rows = [
-    ['Type', state.type === 'national' ? 'National (Bénin)' : `International — ${country ? country.name : ''}`],
-    ['Votre numéro', `+229 ${state.senderPhone}`],
-    ['Destinataire', `+${country ? country.dialCode : '229'} ${state.receiverPhone}`],
+    [
+      'Type',
+      state.type === 'national'
+        ? `National — ${senderCountry ? senderCountry.name : ''}`
+        : `International — ${senderCountry ? senderCountry.name : ''} → ${country ? country.name : ''}`,
+    ],
+    ['Votre numéro', `+${senderCountry ? senderCountry.dialCode : ''} ${state.senderPhone}${senderOp ? ' · ' + senderOp.name : ''}`],
+    ['Destinataire', `+${country ? country.dialCode : ''} ${state.receiverPhone}`],
     ['Réseau destinataire', op ? op.name : '—'],
     ['Vous envoyez', `${amount.toLocaleString('fr-FR')} FCFA`],
     ['Frais de service', `${feeAmount.toLocaleString('fr-FR')} FCFA (${PLATFORM_FEE_PERCENT}%)`],
@@ -448,8 +611,10 @@ form.addEventListener('submit', async (event) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        senderCountry: state.senderCountry,
         senderPhone: state.senderPhone,
         senderOperator: state.senderOperator,
+        senderOtpCode: state.senderOtpCode || undefined,
         receiverPhone: state.receiverPhone,
         receiverOperator: state.operator,
         amount: state.amount,
@@ -493,6 +658,7 @@ async function init() {
   } catch (err) {
     console.error('Impossible de charger la liste des pays :', err);
   }
+  renderSenderCountryList();
   renderCountryList();
   goToPanel(1);
 }

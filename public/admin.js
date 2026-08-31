@@ -150,7 +150,7 @@ function renderRefTransfer(transfer) {
   const lines = [
     `Référence : ${transfer.reference}`,
     `Étape : ${transfer.stage} — Statut : ${transfer.status}`,
-    `Expéditeur : ${transfer.senderPhone} (${formatOperator(transfer.senderOperator, 'BJ')})`,
+    `Expéditeur : ${transfer.senderPhone} (${formatOperator(transfer.senderOperator, transfer.senderCountry)}, ${formatCountry(transfer.senderCountry)})`,
     `Destinataire : ${transfer.receiverPhone} (${formatOperator(transfer.receiverOperator, transfer.receiverCountry)}, ${formatCountry(transfer.receiverCountry)})`,
     `Montant collecté : ${formatAmount(transfer.amount)}`,
     transfer.feeAmount != null
@@ -280,7 +280,7 @@ function renderPending(transfers) {
         <tr data-ref="${t.reference}">
           <td class="mono">${t.reference}</td>
           <td>${stagePill(t.stage, t.status)}</td>
-          <td>${t.senderPhone}<br><span style="color:#8a8577">${formatOperator(t.senderOperator, 'BJ')}</span></td>
+          <td>${t.senderPhone}<br><span style="color:#8a8577">${formatOperator(t.senderOperator, t.senderCountry)} · ${formatCountry(t.senderCountry)}</span></td>
           <td>${t.receiverPhone}<br><span style="color:#8a8577">${formatOperator(t.receiverOperator, t.receiverCountry)} · ${formatCountry(t.receiverCountry)}</span></td>
           <td>${formatAmount(t.amount)}</td>
           <td>${formatDate(t.createdAt)}</td>
