@@ -33,6 +33,13 @@ const sebpay = require('./sebpayService');
 
 const app = express();
 
+// SebPay refuse tout PAYOUT sous ce seuil ("amount_below_min"). Comme le
+// destinataire ET un éventuel remboursement passent tous les deux par un
+// payout, un transfert sous ce montant ne pourra jamais être renvoyé nulle
+// part par l'API en cas d'échec — l'argent resterait coincé sans solution
+// automatisée. D'où le blocage préventif à la création (voir POST /api/transfer).
+const MIN_PAYOUT_AMOUNT_XOF = 300;
+
 // ---------------------------------------------------------------------------
 // Persistance des transferts (fichier JSON local)
 // ---------------------------------------------------------------------------
@@ -121,14 +128,16 @@ function findTransfer(rawReference) {
   return null;
 }
 
-/** Liste unique (dédupliquée) des transferts encore en attente. */
+/** Liste unique (dédupliquée) des transferts encore actionnables :
+ * 'pending' (en cours normal) ET 'blocked' (argent collecté mais envoi au
+ * destinataire en échec — coincé dans le wallet SebPay, action requise). */
 function listPendingTransfers() {
   const seen = new Set();
   const pending = [];
   for (const transfer of transfers.values()) {
     if (seen.has(transfer.reference)) continue;
     seen.add(transfer.reference);
-    if (transfer.status === 'pending') pending.push(transfer);
+    if (transfer.status === 'pending' || transfer.status === 'blocked') pending.push(transfer);
   }
   return pending.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
@@ -166,8 +175,12 @@ async function processCollectionResult(transfer, status, transactionId) {
       await triggerPayout(transfer);
     } catch (error) {
       console.error('Erreur payout SebPay :', error.message, error.raw || '');
-      transfer.status = 'failed';
-      transfer.message = "La collecte a réussi mais l'envoi au destinataire a échoué.";
+      // 'blocked' (et non 'failed') : l'argent a bien été prélevé chez
+      // l'expéditeur, il est coincé dans le wallet SebPay. Ce n'est PAS un
+      // échec définitif du transfert : il reste actionnable (Annuler ou
+      // Réessayer) depuis le panneau ADMIN, contrairement à un vrai 'failed'.
+      transfer.status = 'blocked';
+      transfer.message = `La collecte a réussi mais l'envoi au destinataire a échoué : ${error.message}`;
       transfer.updatedAt = nowIso();
     }
   } else if (status === 'rejected') {
@@ -257,8 +270,17 @@ app.post('/api/transfer', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Numéro de téléphone béninois invalide.' });
   }
 
-  if (!amount || Number(amount) <= 0) {
-    return res.status(400).json({ success: false, message: 'Montant invalide.' });
+  // SebPay refuse tout PAYOUT sous 300 XOF ("amount_below_min"). Comme le
+  // destinataire ET un éventuel remboursement de l'expéditeur passent tous
+  // les deux par un payout, un montant sous ce seuil peut être collecté chez
+  // l'expéditeur mais ne pourra JAMAIS être renvoyé nulle part par l'API
+  // (ni au destinataire, ni en remboursement) : l'argent resterait coincé
+  // sans solution automatisée. On bloque donc ici, avant la collecte.
+  if (!amount || Number(amount) < MIN_PAYOUT_AMOUNT_XOF) {
+    return res.status(400).json({
+      success: false,
+      message: `Montant invalide : le minimum autorisé est de ${MIN_PAYOUT_AMOUNT_XOF} XOF (en dessous, SebPay refuse tout décaissement, y compris un éventuel remboursement).`,
+    });
   }
 
   const reference = `TRF-${Date.now()}`;
@@ -449,14 +471,18 @@ app.post('/api/admin/transfer/:reference/cancel', requireAdmin, async (req, res)
   if (!transfer) {
     return res.status(404).json({ success: false, message: 'Référence introuvable.' });
   }
-  if (transfer.status !== 'pending') {
+  if (transfer.status !== 'pending' && transfer.status !== 'blocked') {
     return res.status(400).json({
       success: false,
-      message: `Ce transfert n'est pas en attente (statut actuel : ${transfer.status}), impossible de l'annuler.`,
+      message: `Ce transfert n'est ni en attente ni bloqué (statut actuel : ${transfer.status}), impossible de l'annuler.`,
       transfer,
     });
   }
-  if (transfer.stage === 'collection') {
+  // Uniquement si la collecte elle-même n'est pas encore confirmée (statut
+  // 'pending'). Si le statut est 'blocked', la collecte a déjà réussi et
+  // l'argent est bel et bien dans le wallet SebPay : le remboursement est
+  // possible même si l'étape ('stage') est encore 'collection'.
+  if (transfer.status === 'pending' && transfer.stage === 'collection') {
     return res.status(400).json({
       success: false,
       message:
@@ -468,6 +494,13 @@ app.post('/api/admin/transfer/:reference/cancel', requireAdmin, async (req, res)
     return res.status(400).json({
       success: false,
       message: 'Un remboursement vers l\'émetteur est déjà en cours pour ce transfert. Utilisez "Vérifier" pour suivre son état plutôt que d\'en relancer un second.',
+      transfer,
+    });
+  }
+  if (transfer.amount < MIN_PAYOUT_AMOUNT_XOF) {
+    return res.status(400).json({
+      success: false,
+      message: `Impossible : ${transfer.amount} XOF est sous le minimum SebPay (${MIN_PAYOUT_AMOUNT_XOF} XOF) pour tout décaissement, y compris un remboursement. Contactez le support SebPay directement avec la référence ${transfer.reference} pour un remboursement manuel.`,
       transfer,
     });
   }
@@ -515,18 +548,26 @@ app.post('/api/admin/transfer/:reference/retry', requireAdmin, async (req, res) 
   if (!transfer) {
     return res.status(404).json({ success: false, message: 'Référence introuvable.' });
   }
-  if (transfer.status !== 'pending') {
+  if (transfer.status !== 'pending' && transfer.status !== 'blocked') {
     return res.status(400).json({
       success: false,
-      message: `Ce transfert n'est pas en attente (statut actuel : ${transfer.status}), impossible de le relancer.`,
+      message: `Ce transfert n'est ni en attente ni bloqué (statut actuel : ${transfer.status}), impossible de le relancer.`,
       transfer,
     });
   }
-  if (transfer.stage === 'collection') {
+  // Idem : ne bloque que si la collecte elle-même n'est pas encore confirmée.
+  if (transfer.status === 'pending' && transfer.stage === 'collection') {
     return res.status(400).json({
       success: false,
       message:
         "L'argent n'a pas encore été collecté chez l'expéditeur : impossible de relancer l'envoi au destinataire tant que la collecte n'est pas confirmée.",
+      transfer,
+    });
+  }
+  if (transfer.amount < MIN_PAYOUT_AMOUNT_XOF) {
+    return res.status(400).json({
+      success: false,
+      message: `Impossible : ${transfer.amount} XOF est sous le minimum SebPay (${MIN_PAYOUT_AMOUNT_XOF} XOF) pour tout décaissement — relancer échouera pour la même raison que la première fois. Contactez le support SebPay avec la référence ${transfer.reference} pour un remboursement manuel.`,
       transfer,
     });
   }
