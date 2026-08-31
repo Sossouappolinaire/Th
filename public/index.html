@@ -1,216 +1,538 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Transfert MTN → Moov | Bénin</title>
-  <style>
-    :root {
-      --ink: #16241f;
-      --paper: #f5f1e8;
-      --mtn: #ffcc00;
-      --moov: #005baa;
-      --line: #d8d0bd;
-      --error: #b3261e;
-    }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Transfert Mobile Money — Envoyer de l'argent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #14213d;
+    --ink-soft: #4b5670;
+    --paper: #faf6ef;
+    --panel: #ffffff;
+    --gold: #e8a33d;
+    --gold-deep: #c07f22;
+    --teal: #1d8a6f;
+    --line: #e6ddc9;
+    --error: #c1443b;
+    --error-bg: #fbeae8;
+    --radius-lg: 18px;
+    --radius-sm: 10px;
+    --shadow: 0 18px 40px -22px rgba(20, 33, 61, 0.35);
+  }
 
-    * { box-sizing: border-box; }
+  * { box-sizing: border-box; }
 
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      background: var(--paper);
-      font-family: 'Segoe UI', Roboto, -apple-system, sans-serif;
-      color: var(--ink);
-      padding: 24px;
-    }
+  html, body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 12% -10%, rgba(232, 163, 61, 0.16), transparent 45%),
+      radial-gradient(circle at 100% 0%, rgba(29, 138, 111, 0.12), transparent 40%),
+      var(--paper);
+    color: var(--ink);
+    font-family: 'Inter', -apple-system, sans-serif;
+  }
 
-    .card {
-      width: 100%;
-      max-width: 420px;
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      overflow: hidden;
-    }
+  body {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 28px 16px 60px;
+  }
 
-    .card__band {
-      height: 6px;
-      background: linear-gradient(90deg, var(--mtn) 0 50%, var(--moov) 50% 100%);
-    }
+  h1, .choice-tile__title { font-family: 'Space Grotesk', 'Inter', sans-serif; }
 
-    .card__body { padding: 28px 26px 30px; }
+  .shell { width: 100%; max-width: 430px; }
 
-    h1 {
-      font-size: 1.3rem;
-      margin: 0 0 4px;
-      letter-spacing: -0.01em;
-    }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 18px;
+    padding-left: 2px;
+  }
+  .brand__mark {
+    width: 30px; height: 30px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold-deep) 100%);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .brand__mark svg { width: 16px; height: 16px; }
+  .brand__name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 1.02rem;
+    letter-spacing: -0.01em;
+  }
 
-    .subtitle {
-      margin: 0 0 24px;
-      font-size: 0.88rem;
-      color: #5c6b64;
-    }
+  .card {
+    background: var(--panel);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
 
-    .field { margin-bottom: 16px; }
+  /* --- Indicateur d'étapes : un chemin, pas un simple decor --- */
+  .steps {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 22px 26px 0;
+  }
+  .steps__dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--line);
+    flex-shrink: 0;
+    transition: background 0.25s ease, transform 0.25s ease;
+  }
+  .steps__dot.is-done { background: var(--teal); }
+  .steps__dot.is-current { background: var(--gold-deep); transform: scale(1.35); }
+  .steps__line {
+    flex: 1;
+    height: 2px;
+    background: var(--line);
+    margin: 0 5px;
+    position: relative;
+    overflow: hidden;
+  }
+  .steps__line::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: var(--teal);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.35s ease;
+  }
+  .steps__line.is-filled::after { transform: scaleX(1); }
 
-    label {
-      display: block;
-      font-size: 0.82rem;
-      font-weight: 600;
-      margin-bottom: 6px;
-    }
+  form { padding: 22px 26px 26px; }
 
-    .badge {
-      display: inline-block;
-      font-size: 0.68rem;
-      font-weight: 700;
-      padding: 2px 7px;
-      border-radius: 4px;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-    .badge--mtn { background: var(--mtn); color: #16241f; }
-    .badge--moov { background: var(--moov); color: #fff; }
+  .panel { animation: rise 0.28s ease; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 
-    input, select {
-      width: 100%;
-      padding: 11px 12px;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      font-size: 0.95rem;
-      background: #fbfaf6;
-      font-family: inherit;
-      color: inherit;
-    }
-    input:focus, select:focus {
-      outline: 2px solid var(--moov);
-      outline-offset: 1px;
-    }
+  h1 {
+    font-size: 1.28rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 4px 0 4px;
+  }
+  .lede {
+    margin: 0 0 22px;
+    font-size: 0.87rem;
+    color: var(--ink-soft);
+    line-height: 1.4;
+  }
 
-    .hint { font-size: 0.75rem; color: #8a8577; margin-top: 5px; }
+  /* --- Choix du type de transfert --- */
+  .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .choice-tile {
+    border: 1.5px solid var(--line);
+    background: var(--paper);
+    border-radius: var(--radius-sm);
+    padding: 18px 14px;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: border-color 0.15s ease, transform 0.1s ease;
+  }
+  .choice-tile:hover { border-color: var(--gold-deep); }
+  .choice-tile:active { transform: scale(0.98); }
+  .choice-tile__flag { font-size: 1.6rem; line-height: 1; }
+  .choice-tile__title { font-size: 0.92rem; font-weight: 600; }
+  .choice-tile__sub { font-size: 0.76rem; color: var(--ink-soft); line-height: 1.3; }
 
-    button {
-      width: 100%;
-      padding: 13px;
-      margin-top: 6px;
-      border: none;
-      border-radius: 7px;
-      background: var(--ink);
-      color: #fff;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button:not(:disabled):hover { background: #263a31; }
+  .field { margin-bottom: 18px; }
+  label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+    color: var(--ink);
+  }
 
-    .message {
-      margin-top: 16px;
-      padding: 12px 14px;
-      border-radius: 7px;
-      font-size: 0.87rem;
-      display: none;
-    }
-    .message--success { display: block; background: #e5f3ea; color: #1e5631; }
-    .message--error { display: block; background: #fbe9e7; color: var(--error); }
+  .op-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 100px;
+  }
 
-    .summary {
-      margin-top: 10px;
-      padding: 0;
-      list-style: none;
-    }
-    .summary li {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 5px 0;
-      border-bottom: 1px dashed rgba(22, 36, 31, 0.12);
-      font-size: 0.83rem;
-    }
-    .summary li:last-child { border-bottom: none; }
-    .summary .k { color: #4b5a53; }
-    .summary .v { font-weight: 600; text-align: right; word-break: break-all; }
+  .phone-input {
+    display: flex;
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+    overflow: hidden;
+  }
+  .phone-input:focus-within { border-color: var(--gold-deep); }
+  .phone-input__code {
+    padding: 12px 10px 12px 14px;
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .phone-input input {
+    border: none;
+    background: transparent;
+    padding: 12px 14px 12px 2px;
+    font-size: 0.95rem;
+    width: 100%;
+    outline: none;
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+  }
 
-    .topbar {
-      display: flex;
-      justify-content: flex-end;
-      max-width: 420px;
-      width: 100%;
-      margin: 0 auto 10px;
-    }
-    .admin-link {
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-      color: #5c6b64;
-      text-decoration: none;
-      border: 1px solid var(--line);
-      background: #fff;
-      padding: 6px 10px;
-      border-radius: 6px;
-      width: auto;
-    }
-    .admin-link:hover { color: var(--ink); border-color: var(--ink); }
-  </style>
+  .amount-input {
+    display: flex;
+    align-items: center;
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+    overflow: hidden;
+  }
+  .amount-input:focus-within { border-color: var(--gold-deep); }
+  .amount-input input {
+    border: none; background: transparent; outline: none;
+    padding: 12px 4px 12px 14px;
+    font-size: 1.05rem; font-weight: 600;
+    width: 100%;
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+  }
+  .amount-input__suffix {
+    padding: 12px 14px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+
+  /* --- Sélecteur de pays --- */
+  .country-trigger {
+    width: 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+    padding: 12px 14px;
+    font-size: 0.92rem;
+    font-family: 'Inter', sans-serif;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .country-trigger svg { width: 15px; height: 15px; color: var(--ink-soft); transition: transform 0.2s ease; }
+  .country-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .country-trigger__placeholder { color: #a29c8a; }
+
+  .country-list {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 6px;
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-sm);
+    max-height: 220px;
+    overflow-y: auto;
+    background: #fff;
+  }
+  .country-list li {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .country-list li:hover { background: var(--paper); }
+  .country-list li .flag { font-size: 1.15rem; }
+  .country-list li .dial { margin-left: auto; color: var(--ink-soft); font-size: 0.78rem; }
+
+  /* --- Réseaux Mobile Money (chips) --- */
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    border: 1.5px solid var(--line);
+    background: #fff;
+    border-radius: 100px;
+    padding: 6px 14px 6px 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .chip__icon {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.68rem;
+    font-weight: 700;
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: -0.02em;
+  }
+  .chip__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .chip.is-selected { border-color: transparent; }
+  .chip-empty { font-size: 0.83rem; color: var(--ink-soft); }
+
+  .summary-line {
+    margin-top: 4px;
+    padding: 12px 14px;
+    background: var(--paper);
+    border: 1px dashed var(--line);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+  .summary-line strong { color: var(--ink); }
+
+  /* --- Récapitulatif --- */
+  .recap {
+    margin: 0 0 20px;
+    padding: 4px 0;
+    display: grid;
+    row-gap: 10px;
+  }
+  .recap div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .recap dt { font-size: 0.78rem; color: var(--ink-soft); }
+  .recap dd { margin: 0; font-size: 0.9rem; font-weight: 600; text-align: right; }
+  .recap .recap__amount dd { font-size: 1.15rem; color: var(--gold-deep); }
+  .recap-divider { height: 1px; background: var(--line); margin: 2px 0; }
+
+  /* --- Boutons --- */
+  .panel__nav { display: flex; gap: 10px; margin-top: 6px; }
+  .btn-primary, .btn-secondary {
+    padding: 13px 18px;
+    border-radius: var(--radius-sm);
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    font-family: 'Inter', sans-serif;
+  }
+  .btn-primary {
+    flex: 1;
+    background: var(--ink);
+    color: #fff;
+  }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary:not(:disabled):hover { background: #1e2f52; }
+  .btn-secondary {
+    background: transparent;
+    color: var(--ink-soft);
+    border: 1.5px solid var(--line);
+  }
+  .btn-secondary:hover { border-color: var(--ink-soft); }
+  form > .panel:first-child .panel__nav { display: none; }
+
+  /* --- Animation "chargement" au clic (Continuer / Envoyer) --- */
+  .btn-primary.is-loading {
+    position: relative;
+    overflow: hidden;
+    color: #fff;
+    cursor: progress;
+    opacity: 1;
+  }
+  .btn-progress__fill {
+    position: absolute;
+    inset: 0;
+    width: 0%;
+    background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+    transition: width 0.08s linear;
+  }
+  .btn-progress__label {
+    position: relative;
+    z-index: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .message {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 0.87rem;
+    display: none;
+    line-height: 1.4;
+  }
+  .message--success { display: block; background: #e5f3ea; color: #1e5631; }
+  .message--error { display: block; background: var(--error-bg); color: var(--error); }
+
+  /* --- Suivi du transfert --- */
+  .status-trail { margin-top: 18px; }
+  .status-trail__item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 0;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+  .status-trail__bullet {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 1.5px solid var(--line);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.65rem;
+    color: transparent;
+    transition: all 0.2s ease;
+  }
+  .status-trail__item.is-active .status-trail__bullet { border-color: var(--gold-deep); background: var(--gold); color: #fff; }
+  .status-trail__item.is-done .status-trail__bullet { border-color: var(--teal); background: var(--teal); color: #fff; }
+  .status-trail__item.is-active, .status-trail__item.is-done { color: var(--ink); font-weight: 600; }
+
+  @media (max-width: 380px) {
+    .choice-grid { grid-template-columns: 1fr; }
+  }
+</style>
 </head>
 <body>
-  <div class="topbar">
-    <a href="/admin.html" class="admin-link">ADMIN</a>
+<div class="shell">
+  <div class="brand">
+    <span class="brand__mark">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 12h13M17 12l-4-4M17 12l-4 4" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+    <span class="brand__name">Transfert Mobile Money</span>
   </div>
+
   <main class="card">
-    <div class="card__band"></div>
-    <div class="card__body">
-      <h1>Envoyer de l'argent</h1>
-      <p class="subtitle">Transfert entre comptes Mobile Money béninois via SebPay (MTN et Moov, dans les deux sens).</p>
+    <ol class="steps" aria-hidden="true">
+      <li class="steps__dot" data-dot="1"></li>
+      <li class="steps__line" data-line="1"></li>
+      <li class="steps__dot" data-dot="2"></li>
+      <li class="steps__line" data-line="2"></li>
+      <li class="steps__dot" data-dot="3"></li>
+      <li class="steps__line" data-line="3"></li>
+      <li class="steps__dot" data-dot="4"></li>
+      <li class="steps__line" data-line="4"></li>
+      <li class="steps__dot" data-dot="5"></li>
+    </ol>
 
-      <form id="transfer-form">
+    <form id="transfer-form" novalidate>
+
+      <section class="panel" data-panel="1">
+        <h1>Où envoyez-vous l'argent ?</h1>
+        <p class="lede">Choisissez le type de transfert pour commencer.</p>
+        <div class="choice-grid">
+          <button type="button" class="choice-tile" data-type="national">
+            <span class="choice-tile__flag">🇧🇯</span>
+            <span class="choice-tile__title">National</span>
+            <span class="choice-tile__sub">Vers un numéro au Bénin</span>
+          </button>
+          <button type="button" class="choice-tile" data-type="international">
+            <span class="choice-tile__flag">🌍</span>
+            <span class="choice-tile__title">International</span>
+            <span class="choice-tile__sub">Vers un autre pays d'Afrique</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="2" hidden>
+        <h1>Votre numéro</h1>
+        <p class="lede">Le compte Mobile Money béninois qui paie l'envoi.</p>
         <div class="field">
-          <label for="senderOperator">Réseau expéditeur</label>
-          <select id="senderOperator" name="senderOperator" required>
-            <option value="mtn">MTN</option>
-            <option value="moov">Moov</option>
-          </select>
+          <label>Votre numéro <span id="senderBadge" class="op-badge" hidden></span></label>
+          <div class="phone-input">
+            <span class="phone-input__code">+229</span>
+            <input type="tel" id="senderPhone" inputmode="numeric" placeholder="90 12 34 56" autocomplete="off" />
+          </div>
+        </div>
+        <div class="panel__nav">
+          <button type="button" class="btn-secondary" data-back>Retour</button>
+          <button type="button" class="btn-primary" data-next disabled>Continuer</button>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="3" hidden>
+        <h1 id="destTitle">Qui reçoit l'argent ?</h1>
+        <p class="lede" id="destLede">Sélectionnez le réseau puis saisissez le numéro.</p>
+
+        <div class="field" id="countryField" hidden>
+          <label>Pays du destinataire</label>
+          <button type="button" id="countryTrigger" class="country-trigger" aria-expanded="false">
+            <span id="countryTriggerLabel" class="country-trigger__placeholder">Choisir un pays</span>
+            <svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <ul id="countryList" class="country-list" hidden></ul>
         </div>
 
         <div class="field">
-          <label for="senderPhone">Votre numéro</label>
-          <input type="tel" id="senderPhone" name="senderPhone" placeholder="01 90 12 34 56" required />
-          <p class="hint">Le compte qui envoie l'argent.</p>
+          <label>Réseau du destinataire</label>
+          <div id="operatorChips" class="chip-row"><span class="chip-empty">Choisissez d'abord un pays.</span></div>
         </div>
 
         <div class="field">
-          <label for="receiverOperator">Réseau destinataire</label>
-          <select id="receiverOperator" name="receiverOperator" required>
-            <option value="moov">Moov</option>
-            <option value="mtn">MTN</option>
-          </select>
+          <label>Numéro du destinataire</label>
+          <div class="phone-input">
+            <span class="phone-input__code" id="receiverDialCode">+229</span>
+            <input type="tel" id="receiverPhone" inputmode="numeric" placeholder="94 12 34 56" autocomplete="off" />
+          </div>
         </div>
 
+        <div class="panel__nav">
+          <button type="button" class="btn-secondary" data-back>Retour</button>
+          <button type="button" class="btn-primary" data-next disabled>Continuer</button>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="4" hidden>
+        <h1>Montant à envoyer</h1>
+        <p class="lede">Le destinataire pourra activer son forfait dès réception.</p>
         <div class="field">
-          <label for="receiverPhone">Numéro du destinataire</label>
-          <input type="tel" id="receiverPhone" name="receiverPhone" placeholder="01 94 12 34 56" required />
-          <p class="hint">Le compte qui reçoit l'argent.</p>
+          <label>Montant</label>
+          <div class="amount-input">
+            <input type="number" id="amount" min="100" step="1" placeholder="5000" />
+            <span class="amount-input__suffix">FCFA</span>
+          </div>
         </div>
-
-        <div class="field">
-          <label for="amount">Montant (FCFA)</label>
-          <input type="number" id="amount" name="amount" min="300" step="1" placeholder="5000" required />
+        <div class="summary-line" id="routeSummary"></div>
+        <div class="panel__nav">
+          <button type="button" class="btn-secondary" data-back>Retour</button>
+          <button type="button" class="btn-primary" data-next disabled>Continuer</button>
         </div>
+      </section>
 
-        <button type="submit" id="submit-btn">Envoyer</button>
-      </form>
+      <section class="panel" data-panel="5" hidden>
+        <h1>Vérifiez et envoyez</h1>
+        <p class="lede">Un dernier coup d'œil avant l'envoi.</p>
+        <dl class="recap" id="recapList"></dl>
+        <div class="panel__nav">
+          <button type="button" class="btn-secondary" data-back>Retour</button>
+          <button type="submit" id="submit-btn" class="btn-primary">Envoyer</button>
+        </div>
+        <div id="message" class="message"></div>
+        <div id="statusTrail" class="status-trail" hidden>
+          <div class="status-trail__item" data-stage="collection">
+            <span class="status-trail__bullet">✓</span>
+            <span>Collecte chez l'expéditeur</span>
+          </div>
+          <div class="status-trail__item" data-stage="payout">
+            <span class="status-trail__bullet">✓</span>
+            <span>Envoi au destinataire</span>
+          </div>
+          <div class="status-trail__item" data-stage="completed">
+            <span class="status-trail__bullet">✓</span>
+            <span>Transfert terminé</span>
+          </div>
+        </div>
+      </section>
 
-      <div id="message" class="message"></div>
-      <ul id="summary" class="summary"></ul>
-    </div>
+    </form>
   </main>
+</div>
 
-  <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

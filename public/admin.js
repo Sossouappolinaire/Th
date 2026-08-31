@@ -1,11 +1,10 @@
 // admin.js
 // Panneau ADMIN : liste + correction des paiements en attente.
-// Protégé par le mot de passe administrateur (voir config.admin.token /
-// variable d'environnement ADMIN_TOKEN, "arrow2025" par défaut). Le mot de
-// passe saisi est envoyé dans l'en-tête X-Admin-Token et gardé en
+// Protégé par le mot de passe administrateur (voir config.admin.token). Le
+// mot de passe saisi est envoyé dans l'en-tête X-Admin-Token et gardé en
 // sessionStorage (effacé à la fermeture de l'onglet) — jamais codé en dur ici.
 
-const TOKEN_KEY = 'sebpay_admin_token';
+const TOKEN_KEY = 'admin_token';
 
 const gate = document.getElementById('gate');
 const appEl = document.getElementById('app');
@@ -26,23 +25,33 @@ const fixStatus = document.getElementById('fixStatus');
 const tableWrap = document.getElementById('tableWrap');
 
 let currentRefTransfer = null;
+let countriesData = [];
+
+fetch('/api/countries')
+  .then((r) => r.json())
+  .then((data) => { if (data.success) countriesData = data.countries; })
+  .catch(() => {});
 
 function setStatus(el, text, type) {
   el.textContent = text;
   el.className = `status-line status-line--${type}`;
 }
 
-function clearStatus(el) {
-  el.textContent = '';
-  el.className = 'status-line';
-}
-
 function getToken() {
   return sessionStorage.getItem(TOKEN_KEY) || '';
 }
 
-function formatOperator(op) {
-  return op === 'mtn' ? 'MTN' : op === 'moov' ? 'Moov' : op || '—';
+function formatOperator(op, countryCode) {
+  if (!op) return '—';
+  const country = countriesData.find((c) => c.code === (countryCode || 'BJ'));
+  const found = country && country.operators.find((o) => o.slug === op);
+  return found ? found.name : op.toUpperCase();
+}
+
+function formatCountry(code) {
+  if (!code || code === 'BJ') return '🇧🇯 Bénin';
+  const country = countriesData.find((c) => c.code === code);
+  return country ? `${country.flag} ${country.name}` : code;
 }
 
 function formatAmount(amount) {
@@ -141,9 +150,12 @@ function renderRefTransfer(transfer) {
   const lines = [
     `Référence : ${transfer.reference}`,
     `Étape : ${transfer.stage} — Statut : ${transfer.status}`,
-    `Expéditeur : ${transfer.senderPhone} (${formatOperator(transfer.senderOperator)})`,
-    `Destinataire : ${transfer.receiverPhone} (${formatOperator(transfer.receiverOperator)})`,
-    `Montant : ${formatAmount(transfer.amount)}`,
+    `Expéditeur : ${transfer.senderPhone} (${formatOperator(transfer.senderOperator, 'BJ')})`,
+    `Destinataire : ${transfer.receiverPhone} (${formatOperator(transfer.receiverOperator, transfer.receiverCountry)}, ${formatCountry(transfer.receiverCountry)})`,
+    `Montant collecté : ${formatAmount(transfer.amount)}`,
+    transfer.feeAmount != null
+      ? `Commission (${transfer.feePercent}%) : ${formatAmount(transfer.feeAmount)} — net envoyé : ${formatAmount(transfer.payoutAmount)}`
+      : null,
     transfer.message,
   ];
 
@@ -155,7 +167,7 @@ function renderRefTransfer(transfer) {
     ? 'warning'
     : 'info';
 
-  setStatus(refStatus, lines.join(' · '), type);
+  setStatus(refStatus, lines.filter(Boolean).join(' · '), type);
 
   // Actionnable si : payout/refund encore pending, OU collecte réussie mais
   // envoi au destinataire resté coincé ('blocked' — voir server.js).
@@ -268,8 +280,8 @@ function renderPending(transfers) {
         <tr data-ref="${t.reference}">
           <td class="mono">${t.reference}</td>
           <td>${stagePill(t.stage, t.status)}</td>
-          <td>${t.senderPhone}<br><span style="color:#8a8577">${formatOperator(t.senderOperator)}</span></td>
-          <td>${t.receiverPhone}<br><span style="color:#8a8577">${formatOperator(t.receiverOperator)}</span></td>
+          <td>${t.senderPhone}<br><span style="color:#8a8577">${formatOperator(t.senderOperator, 'BJ')}</span></td>
+          <td>${t.receiverPhone}<br><span style="color:#8a8577">${formatOperator(t.receiverOperator, t.receiverCountry)} · ${formatCountry(t.receiverCountry)}</span></td>
           <td>${formatAmount(t.amount)}</td>
           <td>${formatDate(t.createdAt)}</td>
           <td>
@@ -342,7 +354,7 @@ refreshBtn.addEventListener('click', loadPending);
 fixAllBtn.addEventListener('click', async () => {
   fixAllBtn.disabled = true;
   fixAllBtn.textContent = 'Correction en cours...';
-  setStatus(fixStatus, 'Vérification de tous les paiements en attente auprès de SebPay...', 'info');
+  setStatus(fixStatus, 'Vérification de tous les paiements en attente auprès de notre prestataire de paiement...', 'info');
 
   try {
     const { ok, data } = await adminFetch('/api/admin/fix-pending', { method: 'POST' });
