@@ -28,6 +28,21 @@
 //   depuis le 21/11/2014) · Congo-Brazzaville 9.
 // Sert à valider strictement la longueur du numéro saisi (au lieu d'une
 // fourchette générique 6-10 utilisée auparavant), côté serveur ET client.
+//
+// ⚠️ Depuis le 01/09/2026 : n'importe quel pays de cette liste peut être
+// EXPÉDITEUR (collecte) ou DESTINATAIRE (payout) — SebPay expose /collections
+// avec un champ `country` qui n'est pas limité au Bénin (confirmé sur leur
+// doc API). L'ancien flag `isHome` (qui figeait le Bénin comme unique pays
+// expéditeur) a été retiré : chaque transfert précise désormais explicitement
+// son pays expéditeur ET son pays destinataire.
+//
+// `otpRequired` + `ussdCode` : certains opérateurs exigent que l'abonné
+// compose un code USSD pour obtenir un OTP à fournir à /collections (sinon
+// SebPay rejette la transaction). D'après la doc SebPay ("Vérification OTP"),
+// concerne à ce jour : Orange Burkina Faso, Orange Côte d'Ivoire, Orange
+// Sénégal. Cette liste peut évoluer — SebPay recommande de revérifier via
+// GET /operators (champ otp_required) avant tout gros volume plutôt que de
+// se fier uniquement à ce codage en dur.
 
 const COUNTRIES = [
   {
@@ -36,7 +51,6 @@ const COUNTRIES = [
     flag: '🇧🇯',
     dialCode: '229',
     phoneDigits: 10, // préfixe "01" + 8 chiffres
-    isHome: true, // pays où se trouve l'expéditeur (collecte toujours ici)
     // ⚠️ 3 réseaux retenus à la demande : MTN, Moov, Celtiis. SebPay liste
     // aussi "Coris Money" (slug 'coris') comme actif pour le Bénin — il a
     // été volontairement exclu ici. Si vous le vouliez inclus, dites-le-moi.
@@ -57,7 +71,7 @@ const COUNTRIES = [
   {
     code: 'CI', name: "Côte d'Ivoire", flag: '🇨🇮', dialCode: '225', phoneDigits: 10,
     operators: [
-      { slug: 'orange', name: 'Orange Money', color: '#ff7900', textColor: '#ffffff' },
+      { slug: 'orange', name: 'Orange Money', color: '#ff7900', textColor: '#ffffff', otpRequired: true, ussdCode: '#144*82#' },
       { slug: 'mtn', name: 'MTN MoMo', color: '#ffcc00', textColor: '#16241f' },
       { slug: 'moov', name: 'Moov Africa', color: '#005baa', textColor: '#ffffff' },
       { slug: 'wave', name: 'Wave', color: '#1dc8f2', textColor: '#16241f' },
@@ -66,7 +80,7 @@ const COUNTRIES = [
   {
     code: 'SN', name: 'Sénégal', flag: '🇸🇳', dialCode: '221', phoneDigits: 9,
     operators: [
-      { slug: 'orange', name: 'Orange Money', color: '#ff7900', textColor: '#ffffff' },
+      { slug: 'orange', name: 'Orange Money', color: '#ff7900', textColor: '#ffffff', otpRequired: true, ussdCode: '#144*391#' },
       { slug: 'free', name: 'Free Money', color: '#e2001a', textColor: '#ffffff' },
       { slug: 'wave', name: 'Wave', color: '#1dc8f2', textColor: '#16241f' },
     ],
@@ -74,7 +88,7 @@ const COUNTRIES = [
   {
     code: 'BF', name: 'Burkina Faso', flag: '🇧🇫', dialCode: '226', phoneDigits: 8,
     operators: [
-      { slug: 'orange', name: 'Orange Money', color: '#ff7900', textColor: '#ffffff' },
+      { slug: 'orange', name: 'Orange Money', color: '#ff7900', textColor: '#ffffff', otpRequired: true, ussdCode: '*144*4*6*montant#' },
       { slug: 'moov', name: 'Moov Africa', color: '#005baa', textColor: '#ffffff' },
       { slug: 'wligdicash', name: 'LigdiCash', color: '#1b75bb', textColor: '#ffffff' },
     ],
@@ -119,6 +133,15 @@ const COUNTRIES = [
       { slug: 'airtel', name: 'Airtel Money', color: '#e40000', textColor: '#ffffff' },
     ],
   },
+  {
+    // Airtel Money est listé "Inactive" chez SebPay pour le Gabon (doc
+    // "Opérateurs de paiement", 01/09/2026) : volontairement exclu, sinon
+    // la collecte/le payout échouerait systématiquement. Seul Moov est actif.
+    code: 'GA', name: 'Gabon', flag: '🇬🇦', dialCode: '241', phoneDigits: 9,
+    operators: [
+      { slug: 'moov', name: 'Moov Africa', color: '#005baa', textColor: '#ffffff' },
+    ],
+  },
 ];
 
 function getCountry(code) {
@@ -139,8 +162,14 @@ function publicCountries() {
     flag: c.flag,
     dialCode: c.dialCode,
     phoneDigits: c.phoneDigits,
-    isHome: !!c.isHome,
-    operators: c.operators.map((o) => ({ slug: o.slug, name: o.name, color: o.color, textColor: o.textColor })),
+    operators: c.operators.map((o) => ({
+      slug: o.slug,
+      name: o.name,
+      color: o.color,
+      textColor: o.textColor,
+      otpRequired: !!o.otpRequired,
+      ussdCode: o.ussdCode || null,
+    })),
   }));
 }
 

@@ -1,9 +1,10 @@
-# SebPay Transfert — Bénin & International
+# SebPay Transfert — Multi-pays
 
-Application Node.js/Express qui encaisse chez l'expéditeur (collecte, toujours
-un Mobile Money béninois) puis décaisse vers le destinataire (payout) via
-l'API SebPay — au Bénin (MTN ↔ Moov) ou dans un autre pays africain pris en
-charge par SebPay.
+Application Node.js/Express qui encaisse chez l'expéditeur (collecte) puis
+décaisse vers le destinataire (payout) via l'API SebPay. Depuis le
+01/09/2026, l'expéditeur ET le destinataire choisissent chacun leur pays
+parmi ceux listés dans `countries.js` — l'expéditeur n'est plus figé sur le
+Bénin.
 
 ## ⚠️ Sécurité
 
@@ -35,12 +36,12 @@ npm start
 
 ## Fonctionnement
 
-1. `POST /api/transfer` initie une **collecte** chez l'expéditeur (toujours un
-   numéro Mobile Money béninois).
+1. `POST /api/transfer` initie une **collecte** chez l'expéditeur, dans SON
+   pays (`senderCountry`, n'importe lequel de `countries.js`).
 2. SebPay notifie le résultat via `POST /api/webhook` (signature HMAC-SHA256
    vérifiée avec `SEBPAY_SECRET_KEY`).
 3. Si la collecte est `approved`, le serveur déclenche automatiquement un
-   **payout** vers le destinataire — au Bénin ou dans le pays choisi.
+   **payout** vers le destinataire, dans LE SIEN (`destinationCountry`).
 4. Le front-end interroge `GET /api/transfer/:reference` toutes les 3 s
    jusqu'à un statut final (`completed`, `failed`, `blocked` ou `refunded`).
 
@@ -49,17 +50,30 @@ npm start
 Les numéros béninois comptent désormais 10 chiffres locaux (préfixe `01` +
 8 chiffres). `sebpayService.js` accepte l'ancien format à 8 chiffres et le
 nouveau, et détecte l'opérateur (MTN/Moov) à partir des 2 chiffres qui
-suivent le `01`.
+suivent le `01`. C'est la seule détection automatique par préfixe : pour
+tous les autres pays, l'utilisateur choisit son réseau manuellement (puces).
 
 ### Transfert national vs international
 
-- **National** : le destinataire est aussi un numéro béninois. Le réseau
-  (MTN/Moov) est détecté automatiquement, mais reste visible/modifiable via
-  les puces de réseau à l'écran.
-- **International** : l'utilisateur choisit d'abord le pays du destinataire,
-  puis le réseau Mobile Money disponible dans ce pays (`countries.js`), puis
-  saisit le numéro local. La collecte reste toujours au Bénin ; seul le
-  *payout* part vers le pays choisi (`country` transmis à SebPay).
+- **National** : expéditeur et destinataire dans **le même pays**
+  (n'importe lequel de `countries.js`, pas seulement le Bénin). Au Bénin, le
+  réseau (MTN/Moov) est détecté automatiquement mais reste modifiable via
+  les puces.
+- **International** : l'expéditeur choisit son pays et son réseau, puis le
+  destinataire choisit un **autre** pays (exclu de la liste : celui de
+  l'expéditeur) et son réseau. Chaque étape passe par `country` (côté
+  collecte **et** côté payout) transmis à SebPay.
+
+### Code OTP (certains opérateurs)
+
+Orange Burkina Faso, Orange Côte d'Ivoire et Orange Sénégal exigent que
+l'abonné compose un code USSD et saisisse l'OTP reçu avant la collecte
+(voir `countries.js` → `otpRequired`/`ussdCode`, et la doc SebPay
+"Vérification OTP"). Le formulaire affiche ce champ automatiquement quand
+l'expéditeur choisit un tel réseau ; sans OTP, `/api/transfer` renvoie une
+erreur `OTP_REQUIRED` explicite plutôt que de laisser SebPay rejeter la
+collecte silencieusement. Cette liste peut évoluer : à revérifier via
+`GET /operators` avant un vrai lancement.
 
 ⚠️ Les pays/réseaux listés dans `countries.js` au-delà du Bénin (Togo,
 Côte d'Ivoire, Sénégal, Burkina Faso, Mali, Niger, Guinée, Cameroun, Congo)

@@ -116,14 +116,20 @@ async function callSebpay(method, path, body) {
 /**
  * Initie une collecte (encaissement) Mobile Money.
  * POST /collections
+ * `country` : code ISO du pays de l'expéditeur (BJ, CI, SN...) — n'importe
+ * lequel des pays listés dans countries.js, pas seulement le Bénin (voir
+ * doc SebPay : /collections accepte un champ `country` par requête).
+ * `otpCode` : requis par SebPay pour certains opérateurs (voir
+ * countries.js -> otpRequired) ; la transaction est rejetée si absent quand
+ * l'opérateur l'exige.
  */
-async function initiateCollection({ phone, operator, amount, externalReference, otpCode }) {
+async function initiateCollection({ phone, operator, country, amount, externalReference, otpCode }) {
   const payload = {
     amount: Number(amount),
     currency: 'XOF',
     phone,
     operator,
-    country: 'BJ',
+    country: country || 'BJ',
     external_reference: externalReference,
     callback_url: `${config.sebpay.publicBaseUrl}/api/webhook`,
   };

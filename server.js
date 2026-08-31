@@ -4,11 +4,13 @@
 // sont jamais exposées au navigateur).
 //
 // Logique du transfert :
-//   1) POST /api/transfer      -> initie une COLLECTE chez l'expéditeur (toujours
-//        un numéro Mobile Money béninois, quelle que soit la destination).
+//   1) POST /api/transfer      -> initie une COLLECTE chez l'expéditeur, dans
+//        SON pays (n'importe lequel des pays de countries.js, plus seulement
+//        le Bénin depuis le 01/09/2026 — voir doc SebPay /collections).
 //   2) POST /api/webhook       -> SebPay notifie le statut final.
-//        - collecte "approved" -> on déclenche un PAYOUT vers le destinataire
-//          (au Bénin en national, dans le pays choisi en international).
+//        - collecte "approved" -> on déclenche un PAYOUT vers le destinataire,
+//          dans SON pays (même pays que l'expéditeur en national, un autre
+//          pays en international).
 //        - payout "approved"   -> le transfert est marqué "completed".
 //        - "rejected"          -> le transfert est marqué "failed".
 //        - payout en échec après collecte réussie -> "blocked" (argent coincé
@@ -279,19 +281,59 @@ app.get('/api/countries', (req, res) => {
   res.json({ success: true, countries: countries.publicCountries() });
 });
 
-// Route principale : déclenche la collecte chez l'expéditeur (toujours au
-// Bénin, quelle que soit la destination) puis prépare le payout.
+/** Résout et valide un contact (pays + numéro + opérateur), pour l'expéditeur
+ * COMME pour le destinataire — les deux suivent désormais exactement la même
+ * logique, aucun n'est plus figé sur le Bénin.
+ * Pour le Bénin spécifiquement : normalisation tolérante à l'ancien format
+ * 8 chiffres (voir normalizeBeninPhone) et détection auto du réseau par
+ * préfixe si l'opérateur n'est pas fourni. Pour les autres pays : l'appelant
+ * doit fournir l'opérateur (pas de plan de numérotation par réseau connu).
+ * Renvoie { country, phone, operator } ou { error }. */
+function resolveContact(countryCode, rawPhone, operatorSlug) {
+  const country = countries.getCountry(countryCode);
+  if (!country) return { error: 'Pays invalide.' };
+
+  const normalizedPhone =
+    country.code === 'BJ'
+      ? sebpay.normalizeBeninPhone(rawPhone)
+      : sebpay.normalizeInternationalPhone(rawPhone, country.dialCode, country.phoneDigits);
+
+  if (!normalizedPhone) {
+    return {
+      error:
+        country.code === 'BJ'
+          ? 'Numéro béninois invalide.'
+          : `Numéro invalide (le format ${country.name} attend ${country.phoneDigits} chiffres après l'indicatif +${country.dialCode}).`,
+    };
+  }
+
+  let resolvedOperatorSlug = operatorSlug;
+  if (!resolvedOperatorSlug && country.code === 'BJ') {
+    resolvedOperatorSlug = sebpay.detectOperator(normalizedPhone.slice(3));
+  }
+  const operator = countries.getOperator(country.code, resolvedOperatorSlug);
+  if (!operator) {
+    return { error: `Réseau Mobile Money non reconnu pour ${country.name}.` };
+  }
+
+  return { country, phone: normalizedPhone, operator };
+}
+
+// Route principale : déclenche la collecte chez l'expéditeur, dans SON pays,
+// puis prépare le payout vers le destinataire, dans LE SIEN.
 //
 // Corps attendu :
-//   - senderPhone, senderOperator   : numéro béninois qui paie + son réseau (mtn|moov)
-//   - amount                        : montant en XOF (obligatoire)
-//   - transferType                  : 'national' (défaut) | 'international'
-//   - receiverPhone, receiverOperator : numéro du destinataire + réseau choisi
-//   - destinationCountry            : code pays ISO du destinataire (obligatoire si international)
+//   - senderCountry, senderPhone, senderOperator : pays + numéro + réseau de l'expéditeur
+//   - senderOtpCode                              : requis si le réseau expéditeur l'exige (voir otpRequired)
+//   - amount                                      : montant en XOF (obligatoire)
+//   - transferType                                : 'national' (même pays) | 'international' (pays différents)
+//   - destinationCountry, receiverPhone, receiverOperator : pays + numéro + réseau du destinataire
 app.post('/api/transfer', async (req, res) => {
   const {
+    senderCountry,
     senderPhone,
     senderOperator,
+    senderOtpCode,
     receiverPhone,
     receiverOperator,
     amount,
@@ -299,10 +341,23 @@ app.post('/api/transfer', async (req, res) => {
     destinationCountry,
   } = req.body;
 
-  if (!senderPhone || !receiverPhone || !amount) {
+  if (!senderCountry || !senderPhone || !destinationCountry || !receiverPhone || !amount) {
     return res.status(400).json({
       success: false,
-      message: 'senderPhone, receiverPhone et amount sont requis.',
+      message: 'senderCountry, senderPhone, destinationCountry, receiverPhone et amount sont requis.',
+    });
+  }
+
+  if (transferType === 'national' && senderCountry !== destinationCountry) {
+    return res.status(400).json({
+      success: false,
+      message: 'Un transfert national doit avoir le même pays des deux côtés (choisissez "International" sinon).',
+    });
+  }
+  if (transferType === 'international' && senderCountry === destinationCountry) {
+    return res.status(400).json({
+      success: false,
+      message: 'Un transfert international doit viser un pays différent de celui de l\'expéditeur (choisissez "National" sinon).',
     });
   }
 
@@ -319,53 +374,21 @@ app.post('/api/transfer', async (req, res) => {
     });
   }
 
-  // L'expéditeur paie toujours depuis un numéro Mobile Money béninois.
-  const normalizedSender = sebpay.normalizeBeninPhone(senderPhone);
-  if (!normalizedSender) {
-    return res.status(400).json({ success: false, message: 'Numéro expéditeur béninois invalide.' });
+  const sender = resolveContact(senderCountry, senderPhone, senderOperator);
+  if (sender.error) {
+    return res.status(400).json({ success: false, message: `Expéditeur : ${sender.error}` });
   }
-  const resolvedSenderOperator = senderOperator || sebpay.detectOperator(normalizedSender.slice(3));
-  if (!countries.getOperator('BJ', resolvedSenderOperator)) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Réseau invalide pour l'expéditeur (choisissez MTN ou Moov)." });
+  if (sender.operator.otpRequired && !senderOtpCode) {
+    return res.status(400).json({
+      success: false,
+      message: `Le réseau ${sender.operator.name} exige un code de confirmation : composez ${sender.operator.ussdCode} sur le téléphone de l'expéditeur puis saisissez le code reçu.`,
+      code: 'OTP_REQUIRED',
+    });
   }
 
-  let normalizedReceiver;
-  let resolvedReceiverOperator;
-  let receiverCountryCode;
-
-  if (transferType === 'international') {
-    const country = countries.getCountry(destinationCountry);
-    if (!country || country.isHome) {
-      return res.status(400).json({ success: false, message: 'Pays de destination invalide.' });
-    }
-    const operator = countries.getOperator(destinationCountry, receiverOperator);
-    if (!operator) {
-      return res.status(400).json({ success: false, message: 'Réseau Mobile Money non reconnu pour ce pays.' });
-    }
-
-    normalizedReceiver = sebpay.normalizeInternationalPhone(receiverPhone, country.dialCode, country.phoneDigits);
-    if (!normalizedReceiver) {
-      return res.status(400).json({
-        success: false,
-        message: `Numéro du destinataire invalide (le format ${country.name} attend ${country.phoneDigits} chiffres après l'indicatif +${country.dialCode}).`,
-      });
-    }
-    resolvedReceiverOperator = operator.slug;
-    receiverCountryCode = country.code;
-  } else {
-    normalizedReceiver = sebpay.normalizeBeninPhone(receiverPhone);
-    if (!normalizedReceiver) {
-      return res.status(400).json({ success: false, message: 'Numéro du destinataire béninois invalide.' });
-    }
-    resolvedReceiverOperator = receiverOperator || sebpay.detectOperator(normalizedReceiver.slice(3));
-    if (!countries.getOperator('BJ', resolvedReceiverOperator)) {
-      return res
-        .status(400)
-        .json({ success: false, message: 'Réseau invalide pour le destinataire (choisissez MTN ou Moov).' });
-    }
-    receiverCountryCode = 'BJ';
+  const receiver = resolveContact(destinationCountry, receiverPhone, receiverOperator);
+  if (receiver.error) {
+    return res.status(400).json({ success: false, message: `Destinataire : ${receiver.error}` });
   }
 
   const reference = `TRF-${Date.now()}`;
@@ -373,21 +396,24 @@ app.post('/api/transfer', async (req, res) => {
 
   try {
     const collection = await sebpay.initiateCollection({
-      phone: normalizedSender,
-      operator: resolvedSenderOperator,
+      phone: sender.phone,
+      operator: sender.operator.slug,
+      country: sender.country.code,
       amount,
       externalReference: reference,
+      otpCode: senderOtpCode,
     });
 
     transfers.set(reference, {
       reference,
       stage: 'collection',
       status: 'pending',
-      senderOperator: resolvedSenderOperator,
-      senderPhone: normalizedSender,
-      receiverOperator: resolvedReceiverOperator,
-      receiverPhone: normalizedReceiver,
-      receiverCountry: receiverCountryCode,
+      senderCountry: sender.country.code,
+      senderOperator: sender.operator.slug,
+      senderPhone: sender.phone,
+      receiverOperator: receiver.operator.slug,
+      receiverPhone: receiver.phone,
+      receiverCountry: receiver.country.code,
       amount: Number(amount), // montant plein collecté chez l'expéditeur
       feePercent: PLATFORM_FEE_PERCENT,
       feeAmount, // commission plateforme, conservée dans le wallet SebPay
@@ -601,7 +627,7 @@ app.post('/api/admin/transfer/:reference/cancel', requireAdmin, async (req, res)
       recipientName: 'Remboursement expéditeur',
       phone: transfer.senderPhone,
       operator: transfer.senderOperator,
-      country: 'BJ',
+      country: transfer.senderCountry || 'BJ', // repli BJ pour les transferts créés avant ce champ
       amount: transfer.amount,
       externalReference: refundReference,
     });
