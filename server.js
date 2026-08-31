@@ -37,7 +37,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Route principale : déclenche la collecte chez l'expéditeur
 app.post('/api/transfer', async (req, res) => {
-  const { senderPhone, receiverPhone, amount } = req.body;
+  const { senderOperator, senderPhone, receiverOperator, receiverPhone, amount } = req.body;
 
   if (!senderPhone || !receiverPhone || !amount) {
     return res.status(400).json({
@@ -46,20 +46,18 @@ app.post('/api/transfer', async (req, res) => {
     });
   }
 
+  if (!['mtn', 'moov'].includes(senderOperator) || !['mtn', 'moov'].includes(receiverOperator)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Réseau invalide : choisissez MTN ou Moov pour l\'expéditeur et le destinataire.',
+    });
+  }
+
   const normalizedSender = sebpay.normalizeBeninPhone(senderPhone);
   const normalizedReceiver = sebpay.normalizeBeninPhone(receiverPhone);
 
   if (!normalizedSender || !normalizedReceiver) {
     return res.status(400).json({ success: false, message: 'Numéro de téléphone béninois invalide.' });
-  }
-
-  const senderOperator = sebpay.detectOperator(normalizedSender.slice(3));
-  const receiverOperator = sebpay.detectOperator(normalizedReceiver.slice(3));
-
-  if (!senderOperator || !receiverOperator) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Impossible de déterminer l'opérateur (MTN/Moov) à partir du numéro." });
   }
 
   if (!amount || Number(amount) <= 0) {

@@ -23,31 +23,43 @@ function authHeaders() {
 
 /**
  * Normalise un numéro béninois vers le format international sans "+".
- * Accepte : 90 12 34 56 / 90123456 / 22990123456 / +22990123456
- * Renvoie : 22990123456 (indicatif 229 + 8 chiffres)
+ * Depuis le 30/11/2024, le Bénin est passé à une numérotation à 10 chiffres :
+ * chaque numéro est désormais précédé du préfixe "01" (ex: 97 XX XX XX -> 01 97 XX XX XX).
+ * Accepte : 97 12 34 56 (ancien 8 chiffres) / 0197123456 / 22901971234 56 / +22901971234 56
+ * Renvoie : 22901971234 56 (indicatif 229 + 01 + 8 chiffres = 13 chiffres)
  */
 function normalizeBeninPhone(rawPhone) {
-  const digitsOnly = String(rawPhone).replace(/\D/g, '');
+  let digits = String(rawPhone).replace(/\D/g, '');
 
-  if (digitsOnly.startsWith('229') && digitsOnly.length === 11) {
-    return digitsOnly;
+  // Retire l'indicatif pays s'il est présent, pour ne garder que la partie locale
+  if (digits.startsWith('229')) {
+    digits = digits.slice(3);
   }
-  if (digitsOnly.length === 8) {
-    return `229${digitsOnly}`;
+
+  // Ancien format à 8 chiffres (avant la réforme du 30/11/2024) : on ajoute le préfixe 01
+  if (digits.length === 8) {
+    digits = `01${digits}`;
   }
+
+  // Format actuel : préfixe 01 + 8 chiffres = 10 chiffres au total
+  if (digits.length === 10 && digits.startsWith('01')) {
+    return `229${digits}`;
+  }
+
   return null; // format non reconnu
 }
 
 /**
- * Détermine le slug d'opérateur SebPay (mtn | moov) à partir des 8 chiffres
- * locaux d'un numéro béninois.
+ * Détermine le slug d'opérateur SebPay (mtn | moov) à partir des 10 chiffres
+ * locaux d'un numéro béninois (préfixe "01" + 8 chiffres, ex: "0197123456").
+ * L'opérateur se détermine par les 2 chiffres qui suivent le "01".
  * Préfixes MTN Bénin  : 90, 91, 96, 97, 98, 99
  * Préfixes Moov Bénin : 94, 95, 64, 65, 66, 67, 68, 69
  * ⚠️ Les plans de numérotation évoluent : à ajuster si besoin, ou à remplacer
  * par un appel à GET /operators?country=BJ pour rester dynamique.
  */
-function detectOperator(localEightDigits) {
-  const prefix2 = localEightDigits.slice(0, 2);
+function detectOperator(localTenDigits) {
+  const prefix2 = localTenDigits.slice(2, 4);
   const mtnPrefixes = ['90', '91', '96', '97', '98', '99'];
   const moovPrefixes = ['94', '95', '64', '65', '66', '67', '68', '69'];
 

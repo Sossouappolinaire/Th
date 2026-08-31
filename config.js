@@ -1,36 +1,28 @@
 // config.js
-// Centralise toutes les variables d'environnement liées à l'API SebPay.
-// Toutes les valeurs sensibles doivent être définies dans les variables
-// d'environnement de Render (jamais commitées dans git).
-
-require('dotenv').config();
+// ⚠️ ATTENTION SÉCURITÉ ⚠️
+// Les clés SebPay ci-dessous sont écrites EN DUR dans ce fichier (à la demande).
+// Ne poussez JAMAIS ce fichier sur un dépôt public (GitHub, etc.) et ne le
+// partagez à personne : quiconque l'obtient peut effectuer des transactions
+// avec votre compte SebPay. Pensez à régénérer ces clés si ce fichier venait
+// à fuiter.
 
 const config = {
-  // Port sur lequel le serveur Express écoute.
-  // Sur Render, la plateforme fournit automatiquement process.env.PORT ;
-  // 10000 est utilisé en repli (et correspond au port par défaut attendu
-  // pour ce déploiement).
+  // Port sur lequel le serveur Express écoute (Render fournit process.env.PORT).
   port: process.env.PORT || 10000,
 
   sebpay: {
-    // URL de base de l'API SebPay (voir documentation officielle).
-    baseUrl: process.env.SEBPAY_BASE_URL || 'https://newapi.sebpay.bj/api/v1',
+    // URL de base de l'API SebPay
+    baseUrl: 'https://newapi.sebpay.bj/api/v1',
 
-    // Clé publique fournie par SebPay (pk_live_... ou pk_test_...)
-    publicKey: process.env.SEBPAY_PUBLIC_KEY || '',
+    // Clé publique SebPay (pk_live_...)
+    publicKey: 'pk_live_KZXk20YFXuETMvvo7B5TZEoybXLtsopBZWKjEPyN',
 
-    // Clé secrète fournie par SebPay (sk_live_... ou sk_test_...)
-    // Sert aussi à vérifier la signature HMAC des webhooks.
-    secretKey: process.env.SEBPAY_SECRET_KEY || '',
+    // Clé secrète SebPay (sk_live_...) — sert aussi à vérifier la signature HMAC des webhooks
+    secretKey: 'sk_live_w6OsteIR8i0Q4mQImeN67irPGUtCSjbYAk6VU6fbpX1lch4ULPrdr5dcD8zt',
 
-    // URL publique de votre serveur, utilisée pour construire callback_url
-    // (doit être l'URL Render, ex: https://votre-app.onrender.com)
-    publicBaseUrl: process.env.PUBLIC_BASE_URL || 'http://localhost:10000',
+    // URL publique de votre service Render, utilisée pour construire callback_url
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || 'https://VOTRE-SERVICE.onrender.com',
   },
 };
-
-if (!config.sebpay.publicKey || !config.sebpay.secretKey) {
-  console.warn('⚠️  SEBPAY_PUBLIC_KEY ou SEBPAY_SECRET_KEY manquante : vérifiez vos variables d\'environnement.');
-}
 
 module.exports = config;
