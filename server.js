@@ -3,26 +3,27 @@
 // de transfert d'argent qui appelle SebPay côté serveur (les clés API ne
 // sont jamais exposées au navigateur).
 //
-// Logique du transfert MTN <-> Moov :
-//   1) POST /api/transfer      -> initie une COLLECTE chez l'expéditeur.
+// Logique du transfert :
+//   1) POST /api/transfer      -> initie une COLLECTE chez l'expéditeur (toujours
+//        un numéro Mobile Money béninois, quelle que soit la destination).
 //   2) POST /api/webhook       -> SebPay notifie le statut final.
-//        - collecte "approved" -> on déclenche un PAYOUT vers le destinataire.
+//        - collecte "approved" -> on déclenche un PAYOUT vers le destinataire
+//          (au Bénin en national, dans le pays choisi en international).
 //        - payout "approved"   -> le transfert est marqué "completed".
 //        - "rejected"          -> le transfert est marqué "failed".
+//        - payout en échec après collecte réussie -> "blocked" (argent coincé
+//          dans le wallet SebPay, actionnable depuis le panneau admin).
 //   3) GET /api/transfer/:ref  -> le front-end interroge l'état du transfert.
+//   4) GET /api/countries      -> liste des pays/réseaux Mobile Money proposés.
 //
 // Panneau ADMIN (protégé par un jeton, voir config.admin.token) :
-//   4) GET  /api/admin/pending             -> liste tous les transferts en attente.
-//   5) POST /api/admin/fix-pending         -> réconcilie TOUS les transferts en
-//        attente avec l'état réel chez SebPay (rattrape les webhooks manqués :
-//        déclenche le payout si la collecte était en fait "approved", marque
-//        "completed" si le payout était en fait "approved", etc.).
-//   6) POST /api/admin/transfer/:ref/check -> réconcilie UN transfert (recherche
-//        par référence) et renvoie son état réel.
-//   7) POST /api/admin/transfer/:ref/cancel -> annule un transfert bloqué en
-//        attente et RENVOIE l'argent au numéro émetteur.
-//   8) POST /api/admin/transfer/:ref/retry  -> relance l'envoi vers le destinataire
-//        directement (le montant est déjà connu, pas besoin de le ressaisir).
+//   5) GET  /api/admin/pending              -> liste tous les transferts en attente/bloqués.
+//   6) POST /api/admin/fix-pending          -> réconcilie TOUS les transferts en
+//        attente avec l'état réel chez SebPay (rattrape les webhooks manqués).
+//   7) POST /api/admin/transfer/:ref/check  -> réconcilie UN transfert et renvoie son état réel.
+//   8) POST /api/admin/transfer/:ref/cancel -> annule un transfert bloqué et RENVOIE
+//        l'argent au numéro émetteur béninois.
+//   9) POST /api/admin/transfer/:ref/retry  -> relance l'envoi vers le destinataire.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -30,6 +31,7 @@ const express = require('express');
 const path = require('path');
 const config = require('./config');
 const sebpay = require('./sebpayService');
+const countries = require('./countries');
 
 const app = express();
 
@@ -39,6 +41,25 @@ const app = express();
 // part par l'API en cas d'échec — l'argent resterait coincé sans solution
 // automatisée. D'où le blocage préventif à la création (voir POST /api/transfer).
 const MIN_PAYOUT_AMOUNT_XOF = 300;
+
+// Commission plateforme (voir config.fees.platformFeePercent) : elle est
+// déduite du montant envoyé au destinataire, jamais du montant collecté
+// chez l'expéditeur. Comme le payout (destinataire) doit lui-même rester
+// au-dessus de MIN_PAYOUT_AMOUNT_XOF, le montant minimum qu'un expéditeur
+// peut envoyer est recalculé en conséquence (ex : avec 5%, il faut
+// collecter au moins ~316 XOF pour qu'il en reste 300 après commission).
+const PLATFORM_FEE_PERCENT = Number(config.fees && config.fees.platformFeePercent) || 0;
+const MIN_TRANSFER_AMOUNT_XOF = Math.ceil(MIN_PAYOUT_AMOUNT_XOF / (1 - PLATFORM_FEE_PERCENT / 100));
+
+/** Calcule la commission plateforme et le montant net envoyé au destinataire
+ * pour un montant collecté donné. Les deux sont arrondis à l'unité XOF la
+ * plus proche (XOF n'a pas de centimes) de façon à ce que
+ * feeAmount + payoutAmount === amount, toujours. */
+function computeFeeSplit(amount) {
+  const feeAmount = Math.round((Number(amount) * PLATFORM_FEE_PERCENT) / 100);
+  const payoutAmount = Number(amount) - feeAmount;
+  return { feeAmount, payoutAmount };
+}
 
 // ---------------------------------------------------------------------------
 // Persistance des transferts (fichier JSON local)
@@ -147,11 +168,19 @@ function listPendingTransfers() {
  * nouvelle tentative (SebPay refuserait une external_reference déjà utilisée). */
 async function triggerPayout(transfer, referenceSuffix = '-OUT') {
   const payoutReference = `${transfer.reference}${referenceSuffix}`;
+  // Le destinataire reçoit transfer.payoutAmount (montant collecté MOINS la
+  // commission plateforme), calculé et figé à la création du transfert —
+  // voir computeFeeSplit(). transfer.amount reste le montant plein
+  // collecté chez l'expéditeur (utilisé tel quel pour un remboursement).
+  // Repli sur transfer.amount pour les transferts créés avant l'ajout de la
+  // commission (déjà persistés sur disque sans champ payoutAmount).
+  const amountToSend = transfer.payoutAmount != null ? transfer.payoutAmount : transfer.amount;
   const payout = await sebpay.initiatePayout({
     recipientName: 'Bénéficiaire',
     phone: transfer.receiverPhone,
     operator: transfer.receiverOperator,
-    amount: transfer.amount,
+    country: transfer.receiverCountry || 'BJ',
+    amount: amountToSend,
     externalReference: payoutReference,
   });
 
@@ -245,9 +274,30 @@ async function reconcileTransfer(transfer) {
 // Routes publiques
 // ---------------------------------------------------------------------------
 
-// Route principale : déclenche la collecte chez l'expéditeur
+// Liste des pays et réseaux Mobile Money disponibles (alimente le front-end)
+app.get('/api/countries', (req, res) => {
+  res.json({ success: true, countries: countries.publicCountries() });
+});
+
+// Route principale : déclenche la collecte chez l'expéditeur (toujours au
+// Bénin, quelle que soit la destination) puis prépare le payout.
+//
+// Corps attendu :
+//   - senderPhone, senderOperator   : numéro béninois qui paie + son réseau (mtn|moov)
+//   - amount                        : montant en XOF (obligatoire)
+//   - transferType                  : 'national' (défaut) | 'international'
+//   - receiverPhone, receiverOperator : numéro du destinataire + réseau choisi
+//   - destinationCountry            : code pays ISO du destinataire (obligatoire si international)
 app.post('/api/transfer', async (req, res) => {
-  const { senderOperator, senderPhone, receiverOperator, receiverPhone, amount } = req.body;
+  const {
+    senderPhone,
+    senderOperator,
+    receiverPhone,
+    receiverOperator,
+    amount,
+    transferType = 'national',
+    destinationCountry,
+  } = req.body;
 
   if (!senderPhone || !receiverPhone || !amount) {
     return res.status(400).json({
@@ -256,39 +306,75 @@ app.post('/api/transfer', async (req, res) => {
     });
   }
 
-  if (!['mtn', 'moov'].includes(senderOperator) || !['mtn', 'moov'].includes(receiverOperator)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Réseau invalide : choisissez MTN ou Moov pour l\'expéditeur et le destinataire.',
-    });
-  }
-
-  const normalizedSender = sebpay.normalizeBeninPhone(senderPhone);
-  const normalizedReceiver = sebpay.normalizeBeninPhone(receiverPhone);
-
-  if (!normalizedSender || !normalizedReceiver) {
-    return res.status(400).json({ success: false, message: 'Numéro de téléphone béninois invalide.' });
-  }
-
   // SebPay refuse tout PAYOUT sous 300 XOF ("amount_below_min"). Comme le
   // destinataire ET un éventuel remboursement de l'expéditeur passent tous
   // les deux par un payout, un montant sous ce seuil peut être collecté chez
   // l'expéditeur mais ne pourra JAMAIS être renvoyé nulle part par l'API
   // (ni au destinataire, ni en remboursement) : l'argent resterait coincé
   // sans solution automatisée. On bloque donc ici, avant la collecte.
-  if (!amount || Number(amount) < MIN_PAYOUT_AMOUNT_XOF) {
+  if (!amount || Number(amount) < MIN_TRANSFER_AMOUNT_XOF) {
     return res.status(400).json({
       success: false,
-      message: `Montant invalide : le minimum autorisé est de ${MIN_PAYOUT_AMOUNT_XOF} XOF (en dessous, SebPay refuse tout décaissement, y compris un éventuel remboursement).`,
+      message: `Montant invalide : le minimum autorisé est de ${MIN_TRANSFER_AMOUNT_XOF} XOF (SebPay refuse tout décaissement sous ${MIN_PAYOUT_AMOUNT_XOF} XOF, et ${PLATFORM_FEE_PERCENT}% de commission plateforme sont déduits avant l'envoi au destinataire).`,
     });
   }
 
+  // L'expéditeur paie toujours depuis un numéro Mobile Money béninois.
+  const normalizedSender = sebpay.normalizeBeninPhone(senderPhone);
+  if (!normalizedSender) {
+    return res.status(400).json({ success: false, message: 'Numéro expéditeur béninois invalide.' });
+  }
+  const resolvedSenderOperator = senderOperator || sebpay.detectOperator(normalizedSender.slice(3));
+  if (!countries.getOperator('BJ', resolvedSenderOperator)) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Réseau invalide pour l'expéditeur (choisissez MTN ou Moov)." });
+  }
+
+  let normalizedReceiver;
+  let resolvedReceiverOperator;
+  let receiverCountryCode;
+
+  if (transferType === 'international') {
+    const country = countries.getCountry(destinationCountry);
+    if (!country || country.isHome) {
+      return res.status(400).json({ success: false, message: 'Pays de destination invalide.' });
+    }
+    const operator = countries.getOperator(destinationCountry, receiverOperator);
+    if (!operator) {
+      return res.status(400).json({ success: false, message: 'Réseau Mobile Money non reconnu pour ce pays.' });
+    }
+
+    normalizedReceiver = sebpay.normalizeInternationalPhone(receiverPhone, country.dialCode, country.phoneDigits);
+    if (!normalizedReceiver) {
+      return res.status(400).json({
+        success: false,
+        message: `Numéro du destinataire invalide (le format ${country.name} attend ${country.phoneDigits} chiffres après l'indicatif +${country.dialCode}).`,
+      });
+    }
+    resolvedReceiverOperator = operator.slug;
+    receiverCountryCode = country.code;
+  } else {
+    normalizedReceiver = sebpay.normalizeBeninPhone(receiverPhone);
+    if (!normalizedReceiver) {
+      return res.status(400).json({ success: false, message: 'Numéro du destinataire béninois invalide.' });
+    }
+    resolvedReceiverOperator = receiverOperator || sebpay.detectOperator(normalizedReceiver.slice(3));
+    if (!countries.getOperator('BJ', resolvedReceiverOperator)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Réseau invalide pour le destinataire (choisissez MTN ou Moov).' });
+    }
+    receiverCountryCode = 'BJ';
+  }
+
   const reference = `TRF-${Date.now()}`;
+  const { feeAmount, payoutAmount } = computeFeeSplit(amount);
 
   try {
     const collection = await sebpay.initiateCollection({
       phone: normalizedSender,
-      operator: senderOperator,
+      operator: resolvedSenderOperator,
       amount,
       externalReference: reference,
     });
@@ -297,11 +383,15 @@ app.post('/api/transfer', async (req, res) => {
       reference,
       stage: 'collection',
       status: 'pending',
-      senderOperator,
+      senderOperator: resolvedSenderOperator,
       senderPhone: normalizedSender,
-      receiverOperator,
+      receiverOperator: resolvedReceiverOperator,
       receiverPhone: normalizedReceiver,
-      amount: Number(amount),
+      receiverCountry: receiverCountryCode,
+      amount: Number(amount), // montant plein collecté chez l'expéditeur
+      feePercent: PLATFORM_FEE_PERCENT,
+      feeAmount, // commission plateforme, conservée dans le wallet SebPay
+      payoutAmount, // montant net effectivement envoyé au destinataire
       collectionTransactionId: collection.transaction_id || null,
       payoutTransactionId: null,
       lastPayoutReference: null,
@@ -511,6 +601,7 @@ app.post('/api/admin/transfer/:reference/cancel', requireAdmin, async (req, res)
       recipientName: 'Remboursement expéditeur',
       phone: transfer.senderPhone,
       operator: transfer.senderOperator,
+      country: 'BJ',
       amount: transfer.amount,
       externalReference: refundReference,
     });
@@ -564,10 +655,13 @@ app.post('/api/admin/transfer/:reference/retry', requireAdmin, async (req, res) 
       transfer,
     });
   }
-  if (transfer.amount < MIN_PAYOUT_AMOUNT_XOF) {
+  // Le retry relance un payout de transfer.payoutAmount (montant net, après
+  // commission), c'est donc lui qu'il faut comparer au minimum SebPay.
+  const retryPayoutAmount = transfer.payoutAmount != null ? transfer.payoutAmount : transfer.amount;
+  if (retryPayoutAmount < MIN_PAYOUT_AMOUNT_XOF) {
     return res.status(400).json({
       success: false,
-      message: `Impossible : ${transfer.amount} XOF est sous le minimum SebPay (${MIN_PAYOUT_AMOUNT_XOF} XOF) pour tout décaissement — relancer échouera pour la même raison que la première fois. Contactez le support SebPay avec la référence ${transfer.reference} pour un remboursement manuel.`,
+      message: `Impossible : ${retryPayoutAmount} XOF (montant net après commission) est sous le minimum SebPay (${MIN_PAYOUT_AMOUNT_XOF} XOF) pour tout décaissement — relancer échouera pour la même raison que la première fois. Contactez le support SebPay avec la référence ${transfer.reference} pour un remboursement manuel.`,
       transfer,
     });
   }

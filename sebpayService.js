@@ -68,6 +68,31 @@ function detectOperator(localTenDigits) {
   return null;
 }
 
+/**
+ * Normalise un numéro international à partir de l'indicatif du pays choisi
+ * dans l'interface (utilisé pour les destinataires hors Bénin, où l'on ne
+ * peut pas deviner l'opérateur depuis le préfixe : l'utilisateur le
+ * sélectionne lui-même dans la liste des réseaux du pays).
+ * Accepte le numéro avec ou sans l'indicatif, avec espaces/tirets.
+ * `expectedDigits` = nombre exact de chiffres attendu pour la partie locale
+ * de ce pays (voir countries.js -> phoneDigits, vérifié par pays). Si non
+ * fourni, on retombe sur l'ancienne fourchette générique 6-10 chiffres.
+ * Renvoie l'indicatif + partie locale (sans "+"), ou null si la longueur
+ * ne correspond pas.
+ */
+function normalizeInternationalPhone(rawPhone, dialCode, expectedDigits) {
+  const digitsOnly = String(rawPhone).replace(/\D/g, '');
+  const withCode = digitsOnly.startsWith(dialCode) ? digitsOnly : `${dialCode}${digitsOnly}`;
+  const localPart = withCode.slice(dialCode.length);
+
+  if (expectedDigits) {
+    if (localPart.length !== expectedDigits) return null;
+  } else if (localPart.length < 6 || localPart.length > 10) {
+    return null;
+  }
+  return withCode;
+}
+
 async function callSebpay(method, path, body) {
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -116,12 +141,12 @@ async function getCollection(idOrReference) {
  * Initie un décaissement (payout) Mobile Money.
  * POST /payouts
  */
-async function initiatePayout({ recipientName, phone, operator, amount, externalReference }) {
+async function initiatePayout({ recipientName, phone, operator, country, amount, externalReference }) {
   const payload = {
     recipient_name: recipientName,
     phone,
     operator,
-    country: 'BJ',
+    country: country || 'BJ',
     amount: Number(amount),
     currency: 'XOF',
     external_reference: externalReference,
@@ -139,6 +164,7 @@ async function getPayout(idOrReference) {
 module.exports = {
   normalizeBeninPhone,
   detectOperator,
+  normalizeInternationalPhone,
   initiateCollection,
   getCollection,
   initiatePayout,

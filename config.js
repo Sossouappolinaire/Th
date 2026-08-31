@@ -29,6 +29,17 @@ const config = {
     // des paiements en attente), écrit en dur à la demande.
     token: 'arrow2025',
   },
+
+  fees: {
+    // Commission de la plateforme, prélevée sur le montant envoyé au
+    // destinataire (le montant COLLECTÉ chez l'expéditeur, lui, reste
+    // inchangé). Ex : expéditeur envoie 5000 XOF, avec 5% -> le
+    // destinataire reçoit 4750 XOF, les 250 XOF restants restent dans le
+    // wallet SebPay au profit du propriétaire de la plateforme.
+    // En cas de remboursement (annulation), c'est le montant COLLECTÉ en
+    // entier qui est renvoyé à l'expéditeur, sans déduire cette commission.
+    platformFeePercent: 5,
+  },
 };
 
 module.exports = config;
