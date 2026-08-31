@@ -1,1 +1,155 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transfert MTN → Moov | Bénin</title>
+  <style>
+    :root {
+      --ink: #16241f;
+      --paper: #f5f1e8;
+      --mtn: #ffcc00;
+      --moov: #005baa;
+      --line: #d8d0bd;
+      --error: #b3261e;
+    }
 
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--paper);
+      font-family: 'Segoe UI', Roboto, -apple-system, sans-serif;
+      color: var(--ink);
+      padding: 24px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .card__band {
+      height: 6px;
+      background: linear-gradient(90deg, var(--mtn) 0 50%, var(--moov) 50% 100%);
+    }
+
+    .card__body { padding: 28px 26px 30px; }
+
+    h1 {
+      font-size: 1.3rem;
+      margin: 0 0 4px;
+      letter-spacing: -0.01em;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      font-size: 0.88rem;
+      color: #5c6b64;
+    }
+
+    .field { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .badge--mtn { background: var(--mtn); color: #16241f; }
+    .badge--moov { background: var(--moov); color: #fff; }
+
+    input {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-size: 0.95rem;
+      background: #fbfaf6;
+    }
+    input:focus {
+      outline: 2px solid var(--moov);
+      outline-offset: 1px;
+    }
+
+    .hint { font-size: 0.75rem; color: #8a8577; margin-top: 5px; }
+
+    button {
+      width: 100%;
+      padding: 13px;
+      margin-top: 6px;
+      border: none;
+      border-radius: 7px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button:not(:disabled):hover { background: #263a31; }
+
+    .message {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 7px;
+      font-size: 0.87rem;
+      display: none;
+    }
+    .message--success { display: block; background: #e5f3ea; color: #1e5631; }
+    .message--error { display: block; background: #fbe9e7; color: var(--error); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="card__band"></div>
+    <div class="card__body">
+      <h1>Envoyer de l'argent</h1>
+      <p class="subtitle">Transfert entre comptes Mobile Money béninois via SebPay.</p>
+
+      <form id="transfer-form">
+        <div class="field">
+          <label for="senderPhone">Votre numéro <span class="badge badge--mtn">MTN</span></label>
+          <input type="tel" id="senderPhone" name="senderPhone" placeholder="90 12 34 56" required />
+          <p class="hint">Le compte qui envoie l'argent.</p>
+        </div>
+
+        <div class="field">
+          <label for="receiverPhone">Numéro du destinataire <span class="badge badge--moov">Moov</span></label>
+          <input type="tel" id="receiverPhone" name="receiverPhone" placeholder="94 12 34 56" required />
+          <p class="hint">Le compte qui reçoit l'argent.</p>
+        </div>
+
+        <div class="field">
+          <label for="amount">Montant (FCFA)</label>
+          <input type="number" id="amount" name="amount" min="100" step="1" placeholder="5000" required />
+        </div>
+
+        <button type="submit" id="submit-btn">Envoyer</button>
+      </form>
+
+      <div id="message" class="message"></div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

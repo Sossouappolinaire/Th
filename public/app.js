@@ -1,0 +1,92 @@
+// app.js
+// Gère la soumission du formulaire, puis suit (polling) l'état du transfert
+// jusqu'à confirmation. N'appelle jamais SebPay directement : passe toujours
+// par notre backend (/api/transfer), qui seul détient les clés API.
+
+const form = document.getElementById('transfer-form');
+const submitBtn = document.getElementById('submit-btn');
+const messageBox = document.getElementById('message');
+
+function showMessage(text, type) {
+  messageBox.textContent = text;
+  messageBox.className = `message message--${type}`;
+}
+
+function isValidBeninPhone(value) {
+  const digits = value.replace(/\D/g, '');
+  return digits.length === 8 || (digits.length === 11 && digits.startsWith('229'));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollTransfer(reference, { intervalMs = 3000, timeoutMs = 120000 } = {}) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const response = await fetch(`/api/transfer/${encodeURIComponent(reference)}`);
+    const data = await response.json();
+
+    if (data.success) {
+      const { status, message } = data.transfer;
+      showMessage(message, status === 'failed' ? 'error' : 'success');
+      if (status === 'completed' || status === 'failed') {
+        return status;
+      }
+    }
+    await sleep(intervalMs);
+  }
+
+  showMessage("Délai dépassé. Vérifiez le statut plus tard.", 'error');
+  return 'timeout';
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  messageBox.className = 'message';
+
+  const senderPhone = document.getElementById('senderPhone').value.trim();
+  const receiverPhone = document.getElementById('receiverPhone').value.trim();
+  const amount = document.getElementById('amount').value.trim();
+
+  if (!isValidBeninPhone(senderPhone) || !isValidBeninPhone(receiverPhone)) {
+    showMessage('Veuillez saisir des numéros béninois valides (8 chiffres).', 'error');
+    return;
+  }
+
+  if (!amount || Number(amount) <= 0) {
+    showMessage('Veuillez saisir un montant valide.', 'error');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Envoi en cours...';
+
+  try {
+    const response = await fetch('/api/transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senderPhone, receiverPhone, amount }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      showMessage(data.message || 'Le transfert a échoué.', 'error');
+      return;
+    }
+
+    showMessage(data.message || 'Collecte initiée, validez sur votre téléphone.', 'success');
+    const finalStatus = await pollTransfer(data.reference);
+
+    if (finalStatus === 'completed') {
+      form.reset();
+    }
+  } catch (err) {
+    showMessage('Erreur réseau. Veuillez réessayer.', 'error');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Envoyer';
+  }
+});
