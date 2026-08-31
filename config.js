@@ -7,8 +7,8 @@
 // à fuiter.
 
 const config = {
-  // Port sur lequel le serveur Express écoute (Render fournit process.env.PORT).
-  port: process.env.PORT || 10000,
+  // Port sur lequel le serveur Express écoute.
+  port: 10000,
 
   sebpay: {
     // URL de base de l'API SebPay
@@ -20,8 +20,14 @@ const config = {
     // Clé secrète SebPay (sk_live_...) — sert aussi à vérifier la signature HMAC des webhooks
     secretKey: 'sk_live_w6OsteIR8i0Q4mQImeN67irPGUtCSjbYAk6VU6fbpX1lch4ULPrdr5dcD8zt',
 
-    // URL publique de votre service Render, utilisée pour construire callback_url
-    publicBaseUrl: process.env.PUBLIC_BASE_URL || 'https://ma-boutique-ngu0.onrender.com',
+    // URL publique de votre service Render, utilisée pour construire callback_url.
+    publicBaseUrl: 'https://ma-boutique-ngu0.onrender.com',
+  },
+
+  admin: {
+    // Mot de passe requis pour accéder au panneau ADMIN (liste + correction
+    // des paiements en attente), écrit en dur à la demande.
+    token: 'arrow2025',
   },
 };
 
