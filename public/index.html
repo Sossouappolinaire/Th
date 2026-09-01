@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Transfert Mobile Money — Envoyer de l'argent</title>
+<title>Paiement Mobile Money</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -286,6 +286,7 @@
   .chip__dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
   .chip.is-selected { border-color: transparent; }
   .chip-empty { font-size: 0.83rem; color: var(--ink-soft); }
+  .field-hint { font-size: 0.78rem; color: var(--ink-soft); margin: -4px 0 12px; }
 
   .summary-line {
     margin-top: 4px;
@@ -335,7 +336,7 @@
     border: 1.5px solid var(--line);
   }
   .btn-secondary:hover { border-color: var(--ink-soft); }
-  form > .panel:first-child .panel__nav { display: none; }
+  form > .panel:first-child .panel__nav .btn-secondary { display: none; }
 
   /* --- Animation "chargement" au clic (Continuer / Envoyer) --- */
   .btn-primary.is-loading {
@@ -369,6 +370,44 @@
   .message--success { display: block; background: #e5f3ea; color: #1e5631; }
   .message--error { display: block; background: var(--error-bg); color: var(--error); }
 
+  /* --- Confirmation de paiement --- */
+  .success-box {
+    margin-top: 18px;
+    padding: 26px 18px;
+    text-align: center;
+    border-radius: var(--radius-sm);
+    background: #e5f3ea;
+    border: 1.5px solid #bfe2cc;
+  }
+  .success-box__icon {
+    width: 42px; height: 42px;
+    margin: 0 auto 10px;
+    border-radius: 50%;
+    background: var(--teal);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem;
+    font-weight: 700;
+  }
+  .success-box__title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: #1e5631;
+    margin-bottom: 6px;
+  }
+  .success-box__amount {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .success-box__ref {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+
   /* --- Suivi du transfert --- */
   .status-trail { margin-top: 18px; }
   .status-trail__item {
@@ -394,9 +433,77 @@
   @media (max-width: 380px) {
     .choice-grid { grid-template-columns: 1fr; }
   }
+
+  /* --- Accès admin (bouton discret en haut à gauche) --- */
+  .admin-trigger {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    width: 34px; height: 34px;
+    border-radius: 9px;
+    border: 1.5px solid var(--line);
+    background: #fff;
+    color: var(--ink-soft);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    z-index: 20;
+  }
+  .admin-trigger:hover { border-color: var(--gold-deep); color: var(--ink); }
+  .admin-trigger svg { width: 16px; height: 16px; }
+
+  .admin-modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(20, 33, 61, 0.45);
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+    z-index: 30;
+  }
+  .admin-modal-backdrop[hidden] { display: none; }
+  .admin-modal {
+    background: #fff;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    padding: 22px;
+    width: 100%;
+    max-width: 320px;
+  }
+  .admin-modal h2 { font-size: 1rem; margin: 0 0 4px; font-weight: 600; }
+  .admin-modal p { font-size: 0.82rem; color: var(--ink-soft); margin: 0 0 14px; line-height: 1.4; }
+  .admin-modal input[type="password"] {
+    width: 100%; padding: 11px 12px; margin-bottom: 10px;
+    border: 1.5px solid var(--line); border-radius: 9px;
+    font-size: 0.9rem; background: var(--paper); color: inherit; font-family: inherit;
+  }
+  .admin-modal input:focus { outline: none; border-color: var(--gold-deep); }
+  .admin-modal .admin-modal__actions { display: flex; gap: 8px; }
+  .admin-modal .admin-modal__error {
+    font-size: 0.8rem; color: var(--error); margin: -4px 0 10px; display: none;
+  }
+  .admin-modal .admin-modal__error.is-visible { display: block; }
 </style>
 </head>
 <body>
+<button type="button" class="admin-trigger" id="adminTrigger" title="Accès administrateur" aria-label="Accès administrateur">
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  </svg>
+</button>
+
+<div class="admin-modal-backdrop" id="adminModalBackdrop" hidden>
+  <div class="admin-modal">
+    <h2>Accès administrateur</h2>
+    <p>Saisissez le mot de passe administrateur pour ouvrir le panneau.</p>
+    <input type="password" id="adminPasswordInput" placeholder="Mot de passe" autocomplete="off" />
+    <div class="admin-modal__error" id="adminPasswordError">Mot de passe incorrect.</div>
+    <div class="admin-modal__actions">
+      <button type="button" class="btn-secondary" id="adminModalCancel" style="flex:1;">Annuler</button>
+      <button type="button" class="btn-primary" id="adminModalSubmit" style="flex:1;">Entrer</button>
+    </div>
+  </div>
+</div>
+
 <div class="shell">
   <div class="brand">
     <span class="brand__mark">
@@ -404,7 +511,7 @@
         <path d="M4 12h13M17 12l-4-4M17 12l-4 4" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </span>
-    <span class="brand__name">Transfert Mobile Money</span>
+    <span class="brand__name">Paiement Mobile Money</span>
   </div>
 
   <main class="card">
@@ -414,33 +521,12 @@
       <li class="steps__dot" data-dot="2"></li>
       <li class="steps__line" data-line="2"></li>
       <li class="steps__dot" data-dot="3"></li>
-      <li class="steps__line" data-line="3"></li>
-      <li class="steps__dot" data-dot="4"></li>
-      <li class="steps__line" data-line="4"></li>
-      <li class="steps__dot" data-dot="5"></li>
     </ol>
 
     <form id="transfer-form" novalidate>
 
       <section class="panel" data-panel="1">
-        <h1>Où envoyez-vous l'argent ?</h1>
-        <p class="lede">Choisissez le type de transfert pour commencer.</p>
-        <div class="choice-grid">
-          <button type="button" class="choice-tile" data-type="national">
-            <span class="choice-tile__flag">🏠</span>
-            <span class="choice-tile__title">National</span>
-            <span class="choice-tile__sub">Même pays des deux côtés</span>
-          </button>
-          <button type="button" class="choice-tile" data-type="international">
-            <span class="choice-tile__flag">🌍</span>
-            <span class="choice-tile__title">International</span>
-            <span class="choice-tile__sub">Vers un autre pays d'Afrique</span>
-          </button>
-        </div>
-      </section>
-
-      <section class="panel" data-panel="2" hidden>
-        <h1 id="senderTitle">D'où envoyez-vous l'argent ?</h1>
+        <h1 id="senderTitle">Vos informations de paiement</h1>
         <p class="lede" id="senderLede">Choisissez votre pays, votre réseau, puis votre numéro.</p>
 
         <div class="field" id="senderCountryField">
@@ -457,7 +543,14 @@
           <div id="senderOperatorChips" class="chip-row"><span class="chip-empty">Choisissez d'abord un pays.</span></div>
         </div>
 
-        <div class="field">
+        <div class="field" id="senderNameField" hidden>
+          <label>Votre nom complet</label>
+          <div class="phone-input">
+            <input type="text" id="senderName" placeholder="Nom et prénom" autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="field" id="senderPhoneField" hidden>
           <label>Votre numéro</label>
           <div class="phone-input">
             <span class="phone-input__code" id="senderDialCode">+—</span>
@@ -479,41 +572,9 @@
         </div>
       </section>
 
-      <section class="panel" data-panel="3" hidden>
-        <h1 id="destTitle">Qui reçoit l'argent ?</h1>
-        <p class="lede" id="destLede">Sélectionnez le réseau puis saisissez le numéro.</p>
-
-        <div class="field" id="countryField" hidden>
-          <label>Pays du destinataire</label>
-          <button type="button" id="countryTrigger" class="country-trigger" aria-expanded="false">
-            <span id="countryTriggerLabel" class="country-trigger__placeholder">Choisir un pays</span>
-            <svg viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-          <ul id="countryList" class="country-list" hidden></ul>
-        </div>
-
-        <div class="field">
-          <label>Réseau du destinataire</label>
-          <div id="operatorChips" class="chip-row"><span class="chip-empty">Choisissez d'abord un pays.</span></div>
-        </div>
-
-        <div class="field">
-          <label>Numéro du destinataire</label>
-          <div class="phone-input">
-            <span class="phone-input__code" id="receiverDialCode">+229</span>
-            <input type="tel" id="receiverPhone" inputmode="numeric" placeholder="94 12 34 56" autocomplete="off" />
-          </div>
-        </div>
-
-        <div class="panel__nav">
-          <button type="button" class="btn-secondary" data-back>Retour</button>
-          <button type="button" class="btn-primary" data-next disabled>Continuer</button>
-        </div>
-      </section>
-
-      <section class="panel" data-panel="4" hidden>
-        <h1>Montant à envoyer</h1>
-        <p class="lede">Le destinataire pourra activer son forfait dès réception.</p>
+      <section class="panel" data-panel="2" hidden>
+        <h1>Montant à payer</h1>
+        <p class="lede">Indiquez le montant que vous souhaitez payer.</p>
         <div class="field">
           <label>Montant</label>
           <div class="amount-input">
@@ -528,28 +589,30 @@
         </div>
       </section>
 
-      <section class="panel" data-panel="5" hidden>
-        <h1>Vérifiez et envoyez</h1>
-        <p class="lede">Un dernier coup d'œil avant l'envoi.</p>
+      <section class="panel" data-panel="3" hidden>
+        <h1 id="recapTitle">Vérifiez et payez</h1>
+        <p class="lede" id="recapLede">Un dernier coup d'œil avant le paiement.</p>
         <dl class="recap" id="recapList"></dl>
         <div class="panel__nav">
           <button type="button" class="btn-secondary" data-back>Retour</button>
-          <button type="submit" id="submit-btn" class="btn-primary">Envoyer</button>
+          <button type="submit" id="submit-btn" class="btn-primary">Payer</button>
         </div>
         <div id="message" class="message"></div>
         <div id="statusTrail" class="status-trail" hidden>
           <div class="status-trail__item" data-stage="collection">
             <span class="status-trail__bullet">✓</span>
-            <span>Collecte chez l'expéditeur</span>
-          </div>
-          <div class="status-trail__item" data-stage="payout">
-            <span class="status-trail__bullet">✓</span>
-            <span>Envoi au destinataire</span>
+            <span>Paiement en cours de validation</span>
           </div>
           <div class="status-trail__item" data-stage="completed">
             <span class="status-trail__bullet">✓</span>
-            <span>Transfert terminé</span>
+            <span>Paiement terminé</span>
           </div>
+        </div>
+        <div id="successBox" class="success-box" hidden>
+          <div class="success-box__icon">✓</div>
+          <div class="success-box__title">Paiement réussi</div>
+          <div class="success-box__amount" id="successAmount"></div>
+          <div class="success-box__ref" id="successRef"></div>
         </div>
       </section>
 
@@ -557,6 +620,67 @@
   </main>
 </div>
 
+<script>
+  // Bouton "Accès administrateur" (en haut à gauche) : ouvre une modale de
+  // mot de passe. Le mot de passe n'est jamais vérifié côté client — il est
+  // simplement transmis au panneau admin qui le valide auprès du serveur
+  // (voir config.admin.token). En cas d'échec, admin.html réaffiche sa
+  // propre grille de connexion avec le message d'erreur du serveur.
+  (function adminAccess() {
+    const TOKEN_KEY = 'admin_token';
+    const trigger = document.getElementById('adminTrigger');
+    const backdrop = document.getElementById('adminModalBackdrop');
+    const input = document.getElementById('adminPasswordInput');
+    const error = document.getElementById('adminPasswordError');
+    const cancelBtn = document.getElementById('adminModalCancel');
+    const submitBtn = document.getElementById('adminModalSubmit');
+
+    function openModal() {
+      error.classList.remove('is-visible');
+      input.value = '';
+      backdrop.hidden = false;
+      setTimeout(() => input.focus(), 30);
+    }
+    function closeModal() {
+      backdrop.hidden = true;
+    }
+
+    async function submitPassword() {
+      const password = input.value.trim();
+      if (!password) {
+        error.textContent = 'Veuillez saisir un mot de passe.';
+        error.classList.add('is-visible');
+        return;
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Vérification...';
+      try {
+        const response = await fetch('/api/admin/pending', {
+          headers: { 'X-Admin-Token': password },
+        });
+        if (response.status === 401) {
+          error.textContent = 'Mot de passe incorrect.';
+          error.classList.add('is-visible');
+          return;
+        }
+        sessionStorage.setItem(TOKEN_KEY, password);
+        window.location.href = 'admin.html';
+      } catch {
+        error.textContent = 'Erreur réseau. Réessayez.';
+        error.classList.add('is-visible');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Entrer';
+      }
+    }
+
+    trigger.addEventListener('click', openModal);
+    cancelBtn.addEventListener('click', closeModal);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+    submitBtn.addEventListener('click', submitPassword);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPassword(); });
+  })();
+</script>
 <script src="app.js"></script>
 </body>
 </html>

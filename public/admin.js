@@ -1,5 +1,5 @@
 // admin.js
-// Panneau ADMIN : liste + correction des paiements en attente.
+// Panneau ADMIN : liste + vérification + remboursement des paiements.
 // Protégé par le mot de passe administrateur (voir config.admin.token). Le
 // mot de passe saisi est envoyé dans l'en-tête X-Admin-Token et gardé en
 // sessionStorage (effacé à la fermeture de l'onglet) — jamais codé en dur ici.
@@ -15,16 +15,16 @@ const gateStatus = document.getElementById('gateStatus');
 const refInput = document.getElementById('refInput');
 const refCheckBtn = document.getElementById('refCheckBtn');
 const refStatus = document.getElementById('refStatus');
-const refActions = document.getElementById('refActions');
-const refCancelBtn = document.getElementById('refCancelBtn');
-const refRetryBtn = document.getElementById('refRetryBtn');
 
 const refreshBtn = document.getElementById('refreshBtn');
 const fixAllBtn = document.getElementById('fixAllBtn');
 const fixStatus = document.getElementById('fixStatus');
 const tableWrap = document.getElementById('tableWrap');
 
-let currentRefTransfer = null;
+const refreshAllBtn = document.getElementById('refreshAllBtn');
+const totalBox = document.getElementById('totalBox');
+const allTableWrap = document.getElementById('allTableWrap');
+
 let countriesData = [];
 
 fetch('/api/countries')
@@ -68,11 +68,20 @@ function formatDate(iso) {
 }
 
 function stagePill(stage, status) {
-  if (status === 'blocked') {
-    return `<span class="pill pill--blocked">Bloqué (collecté, non envoyé)</span>`;
-  }
-  const label = stage === 'collection' ? 'Collecte' : stage === 'payout' ? 'Décaissement' : 'Remboursement';
-  return `<span class="pill pill--${stage}">${label}</span>`;
+  if (stage === 'refund') return `<span class="pill pill--refund">Remboursement</span>`;
+  if (status === 'completed') return `<span class="pill pill--completed">Encaissé</span>`;
+  return `<span class="pill pill--collection">Collecte</span>`;
+}
+
+function statusPill(status) {
+  const map = {
+    completed: ['pill--completed', 'Encaissé'],
+    pending: ['pill--collection', 'En attente'],
+    failed: ['pill--refund', 'Échoué'],
+    refunded: ['pill--refund', 'Remboursé'],
+  };
+  const [cls, label] = map[status] || ['pill--collection', status];
+  return `<span class="pill ${cls}">${label}</span>`;
 }
 
 /** Wrapper fetch qui ajoute le jeton admin et gère l'expiration (401). */
@@ -122,6 +131,7 @@ async function tryEnter(token) {
     }
     showApp();
     renderPending(data.transfers);
+    loadAllTransfers();
   } catch {
     // adminFetch a déjà affiché "Accès réservé aux administrateurs." sur un 401
   }
@@ -141,41 +151,27 @@ tokenInput.addEventListener('keydown', (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Recherche par référence (traiter un paiement bloqué)
+// Recherche par référence (vérifier / rembourser un paiement)
 // ---------------------------------------------------------------------------
 
 function renderRefTransfer(transfer) {
-  currentRefTransfer = transfer;
-
   const lines = [
     `Référence : ${transfer.reference}`,
     `Étape : ${transfer.stage} — Statut : ${transfer.status}`,
-    `Expéditeur : ${transfer.senderPhone} (${formatOperator(transfer.senderOperator, transfer.senderCountry)}, ${formatCountry(transfer.senderCountry)})`,
-    `Destinataire : ${transfer.receiverPhone} (${formatOperator(transfer.receiverOperator, transfer.receiverCountry)}, ${formatCountry(transfer.receiverCountry)})`,
-    `Montant collecté : ${formatAmount(transfer.amount)}`,
-    transfer.feeAmount != null
-      ? `Commission (${transfer.feePercent}%) : ${formatAmount(transfer.feeAmount)} — net envoyé : ${formatAmount(transfer.payoutAmount)}`
-      : null,
+    `Payeur : ${transfer.senderPhone} (${formatOperator(transfer.senderOperator, transfer.senderCountry)}, ${formatCountry(transfer.senderCountry)})`,
+    `Montant : ${formatAmount(transfer.amount)}`,
     transfer.message,
   ];
 
-  const type = transfer.status === 'completed' || transfer.status === 'refunded'
+  const type = transfer.status === 'completed'
+    ? 'success'
+    : transfer.status === 'refunded'
     ? 'success'
     : transfer.status === 'failed'
     ? 'error'
-    : transfer.status === 'blocked'
-    ? 'warning'
     : 'info';
 
   setStatus(refStatus, lines.filter(Boolean).join(' · '), type);
-
-  // Actionnable si : payout/refund encore pending, OU collecte réussie mais
-  // envoi au destinataire resté coincé ('blocked' — voir server.js).
-  const isActionable =
-    (transfer.status === 'pending' && (transfer.stage === 'payout' || transfer.stage === 'refund')) ||
-    transfer.status === 'blocked';
-
-  refActions.style.display = isActionable ? 'flex' : 'none';
 }
 
 refCheckBtn.addEventListener('click', async () => {
@@ -187,7 +183,6 @@ refCheckBtn.addEventListener('click', async () => {
 
   refCheckBtn.disabled = true;
   refCheckBtn.textContent = 'Vérification...';
-  refActions.style.display = 'none';
 
   try {
     const { ok, data } = await adminFetch(
@@ -209,6 +204,7 @@ refCheckBtn.addEventListener('click', async () => {
   } finally {
     refCheckBtn.disabled = false;
     refCheckBtn.textContent = 'Vérifier';
+    loadAllTransfers();
   }
 });
 
@@ -216,52 +212,60 @@ refInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') refCheckBtn.click();
 });
 
-refCancelBtn.addEventListener('click', async () => {
-  if (!currentRefTransfer) return;
-  if (!confirm(`Renvoyer ${formatAmount(currentRefTransfer.amount)} au numéro émetteur ${currentRefTransfer.senderPhone} ?`)) return;
-  refCancelBtn.disabled = true;
-  refRetryBtn.disabled = true;
-  try {
-    const { data } = await adminFetch(
-      `/api/admin/transfer/${encodeURIComponent(currentRefTransfer.reference)}/cancel`,
-      { method: 'POST' }
-    );
-    if (data.transfer) renderRefTransfer(data.transfer);
-    if (!data.success) setStatus(refStatus, data.message, 'error');
-    loadPending();
-  } catch {
-    // géré par adminFetch
-  } finally {
-    refCancelBtn.disabled = false;
-    refRetryBtn.disabled = false;
-  }
-});
+// ---------------------------------------------------------------------------
+// Historique complet + somme totale du compte administrateur
+// ---------------------------------------------------------------------------
 
-refRetryBtn.addEventListener('click', async () => {
-  if (!currentRefTransfer) return;
-  if (
-    !confirm(
-      `Relancer l'envoi de ${formatAmount(currentRefTransfer.amount)} vers ${currentRefTransfer.receiverPhone} ? Ne faites ceci que si vous avez confirmé que la tentative précédente est bloquée (risque de double paiement sinon).`
-    )
-  )
+function renderAllTransfers(transfers, totalAmount) {
+  setStatus(totalBox, `Somme totale dans le compte administrateur : ${formatAmount(totalAmount)} (paiements encaissés, hors remboursements).`, 'success');
+
+  if (!transfers || transfers.length === 0) {
+    allTableWrap.innerHTML = '<div class="empty">Aucun paiement pour le moment.</div>';
     return;
-  refCancelBtn.disabled = true;
-  refRetryBtn.disabled = true;
+  }
+
+  const rows = transfers
+    .map((t) => {
+      return `
+        <tr>
+          <td class="mono">${t.reference}</td>
+          <td>${formatDate(t.createdAt)}</td>
+          <td>${formatCountry(t.senderCountry)}</td>
+          <td>${t.senderPhone || '—'}<br><span style="color:#8a8577">${formatOperator(t.senderOperator, t.senderCountry)}</span></td>
+          <td>${t.senderName || '—'}</td>
+          <td>${formatAmount(t.amount)}</td>
+          <td>${statusPill(t.status)}</td>
+        </tr>`;
+    })
+    .join('');
+
+  allTableWrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Référence</th>
+          <th>Date / heure</th>
+          <th>Pays</th>
+          <th>Numéro</th>
+          <th>Nom</th>
+          <th>Montant</th>
+          <th>Statut</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function loadAllTransfers() {
   try {
-    const { data } = await adminFetch(
-      `/api/admin/transfer/${encodeURIComponent(currentRefTransfer.reference)}/retry`,
-      { method: 'POST' }
-    );
-    if (data.transfer) renderRefTransfer(data.transfer);
-    if (!data.success) setStatus(refStatus, data.message, 'error');
-    loadPending();
+    const { ok, data } = await adminFetch('/api/admin/all');
+    if (ok) renderAllTransfers(data.transfers, data.totalAmount);
   } catch {
     // géré par adminFetch
-  } finally {
-    refCancelBtn.disabled = false;
-    refRetryBtn.disabled = false;
   }
-});
+}
+
+refreshAllBtn.addEventListener('click', loadAllTransfers);
 
 // ---------------------------------------------------------------------------
 // Liste + correction en masse
@@ -275,22 +279,16 @@ function renderPending(transfers) {
 
   const rows = transfers
     .map((t) => {
-      const canAct = t.stage === 'payout' || t.stage === 'refund' || t.status === 'blocked';
       return `
         <tr data-ref="${t.reference}">
           <td class="mono">${t.reference}</td>
           <td>${stagePill(t.stage, t.status)}</td>
           <td>${t.senderPhone}<br><span style="color:#8a8577">${formatOperator(t.senderOperator, t.senderCountry)} · ${formatCountry(t.senderCountry)}</span></td>
-          <td>${t.receiverPhone}<br><span style="color:#8a8577">${formatOperator(t.receiverOperator, t.receiverCountry)} · ${formatCountry(t.receiverCountry)}</span></td>
           <td>${formatAmount(t.amount)}</td>
           <td>${formatDate(t.createdAt)}</td>
           <td>
             <div class="actions">
               <button class="secondary row-check">Vérifier</button>
-              <div class="row2">
-                <button class="danger row-cancel" ${canAct ? '' : 'disabled'}>Annuler</button>
-                <button class="success row-retry" ${canAct ? '' : 'disabled'}>Réessayer</button>
-              </div>
             </div>
           </td>
         </tr>`;
@@ -303,8 +301,7 @@ function renderPending(transfers) {
         <tr>
           <th>Référence</th>
           <th>Étape</th>
-          <th>Expéditeur</th>
-          <th>Destinataire</th>
+          <th>Payeur</th>
           <th>Montant</th>
           <th>Créé le</th>
           <th>Actions</th>
@@ -316,15 +313,10 @@ function renderPending(transfers) {
   tableWrap.querySelectorAll('tr[data-ref]').forEach((row) => {
     const reference = row.dataset.ref;
     row.querySelector('.row-check').addEventListener('click', () => rowAction(row, reference, 'check'));
-    row.querySelector('.row-cancel').addEventListener('click', () => rowAction(row, reference, 'cancel'));
-    row.querySelector('.row-retry').addEventListener('click', () => rowAction(row, reference, 'retry'));
   });
 }
 
 async function rowAction(row, reference, action) {
-  if (action === 'cancel' && !confirm(`Renvoyer l'argent de ${reference} au numéro émetteur ?`)) return;
-  if (action === 'retry' && !confirm(`Relancer l'envoi de ${reference} au destinataire ? (risque de double paiement si la tentative précédente aboutit aussi)`)) return;
-
   const buttons = row.querySelectorAll('button');
   buttons.forEach((b) => (b.disabled = true));
 
@@ -337,6 +329,7 @@ async function rowAction(row, reference, action) {
     // géré par adminFetch
   } finally {
     loadPending();
+    loadAllTransfers();
   }
 }
 
@@ -374,6 +367,7 @@ fixAllBtn.addEventListener('click', async () => {
     );
 
     loadPending();
+    loadAllTransfers();
   } catch {
     // géré par adminFetch
   } finally {

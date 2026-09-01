@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Admin · Paiements en attente | Transfert Mobile Money</title>
+<title>Admin · Paiements | Paiement Mobile Money</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -75,9 +75,8 @@
 
   .pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 700; }
   .pill--collection { background: #fff6d9; color: var(--warning); }
-  .pill--payout { background: #e3ecf7; color: #1d4ea6; }
   .pill--refund { background: var(--error-bg); color: var(--error); }
-  .pill--blocked { background: var(--warning-bg); color: var(--warning); }
+  .pill--completed { background: #e5f3ea; color: #1e5631; }
 
   .actions { display: flex; flex-direction: column; gap: 6px; min-width: 210px; }
   .actions .row2 { display: flex; gap: 6px; }
@@ -92,10 +91,10 @@
 <div class="wrap">
   <header>
     <div>
-      <h1>Paiements en attente</h1>
-      <p class="subtitle">Panneau admin — Transfert Mobile Money</p>
+      <h1>Paiements</h1>
+      <p class="subtitle">Panneau admin — Paiement Mobile Money</p>
     </div>
-    <a class="back" href="/index.html">&larr; Retour à l'envoi</a>
+    <a class="back" href="/index.html">&larr; Retour au paiement</a>
   </header>
 
   <div id="gate" class="panel locked">
@@ -109,24 +108,34 @@
 
   <div id="app" style="display:none;">
     <div class="panel">
-      <h2>Traiter un paiement bloqué</h2>
-      <p class="hint">Saisissez la référence du transfert : elle est vérifiée auprès de notre prestataire de paiement. S'il est toujours en attente, vous pourrez l'annuler (renvoi à l'émetteur) ou réessayer l'envoi (sans ressaisir le montant).</p>
+      <h2>Vérifier un paiement</h2>
+      <p class="hint">Saisissez la référence du paiement : elle est vérifiée auprès de notre prestataire de paiement.</p>
       <div class="row">
         <input type="text" id="refInput" placeholder="Ex : TRF-1730000000000" />
         <button id="refCheckBtn">Vérifier</button>
       </div>
       <div id="refStatus" class="status-line"></div>
-      <div id="refActions" class="row" style="margin-top:10px; display:none;">
-        <button class="danger" id="refCancelBtn">Annuler (renvoyer à l'émetteur)</button>
-        <button class="success" id="refRetryBtn">Réessayer l'envoi</button>
+    </div>
+
+    <div class="panel">
+      <div class="row" style="justify-content: space-between; align-items:center;">
+        <div>
+          <h2>Compte administrateur — historique complet</h2>
+          <p class="hint" style="margin-bottom:0;">Référence, date/heure, pays, numéro, nom et montant de chaque paiement, avec la somme totale actuellement dans le compte.</p>
+        </div>
+        <div class="row" style="width:auto;">
+          <button class="secondary" id="refreshAllBtn">Actualiser</button>
+        </div>
       </div>
+      <div id="totalBox" class="status-line status-line--info" style="display:block;margin-top:14px;">Chargement du total…</div>
+      <div id="allTableWrap" style="margin-top:14px; overflow-x:auto;"></div>
     </div>
 
     <div class="panel">
       <div class="row" style="justify-content: space-between; align-items:center;">
         <div>
           <h2>Tous les paiements en attente</h2>
-          <p class="hint" style="margin-bottom:0;">Rattrape automatiquement les webhooks manqués (déclenche l'envoi si la collecte était en fait approuvée, etc.).</p>
+          <p class="hint" style="margin-bottom:0;">Rattrape automatiquement les webhooks manqués (confirme le paiement si la collecte était en fait approuvée, etc.).</p>
         </div>
         <div class="row" style="width:auto;">
           <button class="secondary" id="refreshBtn">Actualiser</button>
