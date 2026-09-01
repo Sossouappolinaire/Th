@@ -71,25 +71,36 @@ function detectOperator(localTenDigits) {
 }
 
 /**
- * Convertit un slug générique interne ('mtn', 'moov', 'orange'...) vers le
- * slug EXACT attendu par SebPay, qui est suffixé par le pays
- * (ex: 'mtn-bj', 'moov-bj', 'orange-ci') — voir docs/SEBPAY-API.md.
- * C'est la cause du bug historique : on envoyait 'mtn' au lieu de 'mtn-bj',
- * donc la collecte n'atteignait jamais le téléphone de l'expéditeur et la
- * transaction restait "pending" jusqu'au délai dépassé.
- * Si le slug est déjà suffixé, on le renvoie tel quel.
+ * Renvoie le slug d'opérateur EXACT attendu par SebPay dans le corps de
+ * POST /collections et POST /payouts.
+ *
+ * ⚠️ CORRIGÉ le 01/09/2026 : ce slug n'est PAS suffixé par le pays. La
+ * spec du champ `operator` dans docs/SEBPAY-API.md (et l'exemple cURL
+ * officiel) est explicite : "Slug opérateur (mtn, moov, orange, wave...)",
+ * envoyé avec un champ `country` séparé (ex: operator: "mtn", country: "BJ").
+ * Le suffixe pays (ex: "moov-bj") vu dans le tableau "Opérateurs de
+ * paiement" de la doc est l'identifiant interne que SebPay utilise pour
+ * lister les opérateurs par pays (colonne "Slug" de ce tableau) — ce n'est
+ * PAS ce qu'attend le corps de la requête, qui veut la colonne "Code"
+ * (mtn, moov, celtiis...).
+ *
+ * L'ancienne version de cette fonction ajoutait le suffixe "-{pays}"
+ * (ex: "mtn-bj"), ce qui provoque en pratique un rejet immédiat de
+ * l'opérateur par l'API ("Operator not found or not configured for this
+ * country") — reproduit le 01/09/2026 sur une collecte MTN Bénin.
+ * On renvoie donc désormais le slug interne tel quel (déjà "plat" dans
+ * countries.js : 'mtn', 'moov', 'celtiis', 'orange', 'wave'...), sans le
+ * suffixer. Si un opérateur précis nécessite un jour un slug différent de
+ * son code interne, ajoutez-le à SEBPAY_SLUG_OVERRIDES ci-dessous plutôt
+ * que de réintroduire un suffixage générique.
  */
 const SEBPAY_SLUG_OVERRIDES = {
-  'halo_pesa-tz': 'halo_pesa',
+  // 'slug-interne': 'slug-attendu-par-sebpay',
 };
 
 function toSebpaySlug(operatorSlug, countryCode) {
   const slug = String(operatorSlug || '').toLowerCase();
-  const cc = String(countryCode || 'BJ').toLowerCase();
-  if (!slug) return slug;
-  if (slug.endsWith(`-${cc}`)) return slug;
-  const candidate = `${slug}-${cc}`;
-  return SEBPAY_SLUG_OVERRIDES[candidate] || candidate;
+  return SEBPAY_SLUG_OVERRIDES[slug] || slug;
 }
 
 /**
