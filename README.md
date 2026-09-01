@@ -1,10 +1,11 @@
-# SebPay Transfert — Multi-pays
+# Paiement Mobile Money — Encaissement uniquement
 
-Application Node.js/Express qui encaisse chez l'expéditeur (collecte) puis
-décaisse vers le destinataire (payout) via l'API SebPay. Depuis le
-01/09/2026, l'expéditeur ET le destinataire choisissent chacun leur pays
-parmi ceux listés dans `countries.js` — l'expéditeur n'est plus figé sur le
-Bénin.
+Application Node.js/Express qui encaisse (collecte) de l'argent via l'API
+SebPay. Depuis la refonte du 01/09/2026, l'application n'a **plus de
+destinataire ni de décaissement automatique** : l'utilisateur choisit son
+pays parmi ceux listés dans `countries.js`, paie, et l'argent reste dans le
+wallet SebPay du propriétaire de la plateforme. Un message de succès avec le
+montant payé s'affiche une fois le paiement confirmé.
 
 ## ⚠️ Sécurité
 
@@ -36,14 +37,16 @@ npm start
 
 ## Fonctionnement
 
-1. `POST /api/transfer` initie une **collecte** chez l'expéditeur, dans SON
+1. `POST /api/transfer` initie une **collecte** chez l'utilisateur, dans SON
    pays (`senderCountry`, n'importe lequel de `countries.js`).
 2. SebPay notifie le résultat via `POST /api/webhook` (signature HMAC-SHA256
    vérifiée avec `SEBPAY_SECRET_KEY`).
-3. Si la collecte est `approved`, le serveur déclenche automatiquement un
-   **payout** vers le destinataire, dans LE SIEN (`destinationCountry`).
+3. Si la collecte est `approved`, le paiement est marqué **`completed`**
+   directement — aucun décaissement n'est déclenché, l'argent reste sur la
+   plateforme.
 4. Le front-end interroge `GET /api/transfer/:reference` toutes les 3 s
-   jusqu'à un statut final (`completed`, `failed`, `blocked` ou `refunded`).
+   jusqu'à un statut final (`completed` ou `failed`) et affiche un message de
+   succès avec le montant payé dès que le statut passe à `completed`.
 
 ### Numéros béninois (réforme du 30/11/2024)
 
@@ -53,24 +56,13 @@ nouveau, et détecte l'opérateur (MTN/Moov) à partir des 2 chiffres qui
 suivent le `01`. C'est la seule détection automatique par préfixe : pour
 tous les autres pays, l'utilisateur choisit son réseau manuellement (puces).
 
-### Transfert national vs international
-
-- **National** : expéditeur et destinataire dans **le même pays**
-  (n'importe lequel de `countries.js`, pas seulement le Bénin). Au Bénin, le
-  réseau (MTN/Moov) est détecté automatiquement mais reste modifiable via
-  les puces.
-- **International** : l'expéditeur choisit son pays et son réseau, puis le
-  destinataire choisit un **autre** pays (exclu de la liste : celui de
-  l'expéditeur) et son réseau. Chaque étape passe par `country` (côté
-  collecte **et** côté payout) transmis à SebPay.
-
 ### Code OTP (certains opérateurs)
 
 Orange Burkina Faso, Orange Côte d'Ivoire et Orange Sénégal exigent que
 l'abonné compose un code USSD et saisisse l'OTP reçu avant la collecte
 (voir `countries.js` → `otpRequired`/`ussdCode`, et la doc SebPay
 "Vérification OTP"). Le formulaire affiche ce champ automatiquement quand
-l'expéditeur choisit un tel réseau ; sans OTP, `/api/transfer` renvoie une
+l'utilisateur choisit un tel réseau ; sans OTP, `/api/transfer` renvoie une
 erreur `OTP_REQUIRED` explicite plutôt que de laisser SebPay rejeter la
 collecte silencieusement. Cette liste peut évoluer : à revérifier via
 `GET /operators` avant un vrai lancement.
@@ -79,38 +71,34 @@ collecte silencieusement. Cette liste peut évoluer : à revérifier via
 Côte d'Ivoire, Sénégal, Burkina Faso, Mali, Niger, Guinée, Cameroun, Congo)
 utilisent les slugs d'opérateurs les plus courants du marché. **Vérifiez-les
 auprès de SebPay (documentation ou support) avant un vrai lancement à
-l'international** : un mauvais slug fait simplement échouer le payout avec
-une erreur explicite (aucun argent ne part), mais autant confirmer en amont.
+l'international** : un mauvais slug fait simplement échouer la collecte avec
+une erreur explicite (aucun argent ne bouge), mais autant confirmer en amont.
 
 ### Montant minimum
 
-SebPay refuse tout décaissement (payout) sous **300 XOF**. Comme un
-remboursement passe aussi par un payout, ce seuil est bloqué dès la création
-du transfert pour éviter qu'un montant collecté reste coincé sans solution.
+SebPay refuse tout décaissement sous **300 XOF**. Comme un remboursement
+passe par un décaissement, ce seuil est bloqué dès la création du paiement
+pour garantir qu'un paiement encaissé pourra toujours être remboursé si
+besoin.
 
 ### Persistance
 
-Les transferts en cours sont sauvegardés dans `data/transfers.json` (créé
+Les paiements sont sauvegardés dans `data/transfers.json` (créé
 automatiquement), et rechargés au démarrage. Cela survit à un crash/redémarrage
 du process, mais **pas** à un redéploiement Render qui recrée le disque — pour
 une garantie totale, remplacez ce fichier par une vraie base de données
 (Postgres, ou un Render Disk persistant).
 
 Le serveur réconcilie aussi automatiquement, toutes les 2 minutes, tous les
-transferts encore en attente auprès de SebPay (rattrape les webhooks manqués).
+paiements encore en attente auprès de SebPay (rattrape les webhooks manqués).
 
 ## Panneau admin
 
 Accessible sur `/admin.html`, protégé par le mot de passe défini dans
 `config.admin.token`. Permet de :
 
-- lister tous les paiements en attente ou bloqués ;
-- vérifier l'état réel d'un transfert par référence auprès de SebPay ;
-- **annuler** un transfert bloqué (renvoie l'argent au numéro émetteur) ;
-- **réessayer** l'envoi au destinataire sans ressaisir le montant ;
+- lister tous les paiements en attente ;
+- vérifier l'état réel d'un paiement par référence auprès de SebPay ;
+- **rembourser** un paiement déjà encaissé (renvoie l'argent au numéro
+  payeur) — utile pour un client à rembourser ;
 - corriger en masse tous les paiements en attente en un clic.
-
-Un transfert passe au statut **`blocked`** quand la collecte a réussi mais
-que l'envoi au destinataire a échoué : l'argent est alors dans le wallet
-SebPay, ni perdu ni livré — à traiter depuis ce panneau (annuler ou
-réessayer).
