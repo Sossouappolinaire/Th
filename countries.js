@@ -55,9 +55,13 @@ const COUNTRIES = [
     // aussi "Coris Money" (slug 'coris') comme actif pour le Bénin — il a
     // été volontairement exclu ici. Si vous le vouliez inclus, dites-le-moi.
     operators: [
-      { slug: 'mtn', name: 'MTN', color: '#ffcc00', textColor: '#16241f', prefixes: ['90', '91', '96', '97', '98', '99'] },
-      { slug: 'moov', name: 'Moov Africa', color: '#005baa', textColor: '#ffffff', prefixes: ['94', '95', '64', '65', '66', '67', '68', '69'] },
-      { slug: 'celtiis', name: 'Celtiis Money', color: '#00a651', textColor: '#ffffff' },
+      // Préfixes EZAB officiels ARCEP Bénin (liste publiée en 02/2026), sans
+      // le "01". ⚠️ Avec la portabilité des numéros, ces préfixes ne sont
+      // qu'une SUGGESTION d'affichage : le réseau retenu est toujours celui
+      // choisi par l'utilisateur.
+      { slug: 'mtn', name: 'MTN', color: '#ffcc00', textColor: '#16241f', prefixes: ['42', '46', '50', '51', '52', '53', '54', '56', '57', '59', '61', '62', '66', '67', '69', '90', '91', '96', '97'] },
+      { slug: 'moov', name: 'Moov Africa', color: '#005baa', textColor: '#ffffff', prefixes: ['45', '55', '58', '60', '63', '64', '65', '68', '94', '95', '98', '99'] },
+      { slug: 'celtiis', name: 'Celtiis Money', color: '#00a651', textColor: '#ffffff', prefixes: ['20', '21', '22', '23', '24', '28', '29', '40', '41', '43', '44', '47', '48', '49', '92', '93'] },
     ],
   },
   {

@@ -60,12 +60,36 @@ function normalizeBeninPhone(rawPhone) {
  */
 function detectOperator(localTenDigits) {
   const prefix2 = localTenDigits.slice(2, 4);
-  const mtnPrefixes = ['90', '91', '96', '97', '98', '99'];
-  const moovPrefixes = ['94', '95', '64', '65', '66', '67', '68', '69'];
+  const mtnPrefixes = ['42', '46', '50', '51', '52', '53', '54', '56', '57', '59', '61', '62', '66', '67', '69', '90', '91', '96', '97'];
+  const moovPrefixes = ['45', '55', '58', '60', '63', '64', '65', '68', '94', '95', '98', '99'];
+  const celtiisPrefixes = ['20', '21', '22', '23', '24', '28', '29', '40', '41', '43', '44', '47', '48', '49', '92', '93'];
 
   if (mtnPrefixes.includes(prefix2)) return 'mtn';
   if (moovPrefixes.includes(prefix2)) return 'moov';
+  if (celtiisPrefixes.includes(prefix2)) return 'celtiis';
   return null;
+}
+
+/**
+ * Convertit un slug générique interne ('mtn', 'moov', 'orange'...) vers le
+ * slug EXACT attendu par SebPay, qui est suffixé par le pays
+ * (ex: 'mtn-bj', 'moov-bj', 'orange-ci') — voir docs/SEBPAY-API.md.
+ * C'est la cause du bug historique : on envoyait 'mtn' au lieu de 'mtn-bj',
+ * donc la collecte n'atteignait jamais le téléphone de l'expéditeur et la
+ * transaction restait "pending" jusqu'au délai dépassé.
+ * Si le slug est déjà suffixé, on le renvoie tel quel.
+ */
+const SEBPAY_SLUG_OVERRIDES = {
+  'halo_pesa-tz': 'halo_pesa',
+};
+
+function toSebpaySlug(operatorSlug, countryCode) {
+  const slug = String(operatorSlug || '').toLowerCase();
+  const cc = String(countryCode || 'BJ').toLowerCase();
+  if (!slug) return slug;
+  if (slug.endsWith(`-${cc}`)) return slug;
+  const candidate = `${slug}-${cc}`;
+  return SEBPAY_SLUG_OVERRIDES[candidate] || candidate;
 }
 
 /**
@@ -128,7 +152,7 @@ async function initiateCollection({ phone, operator, country, amount, externalRe
     amount: Number(amount),
     currency: 'XOF',
     phone,
-    operator,
+    operator: toSebpaySlug(operator, country),
     country: country || 'BJ',
     external_reference: externalReference,
     callback_url: `${config.sebpay.publicBaseUrl}/api/webhook`,
@@ -151,7 +175,7 @@ async function initiatePayout({ recipientName, phone, operator, country, amount,
   const payload = {
     recipient_name: recipientName,
     phone,
-    operator,
+    operator: toSebpaySlug(operator, country),
     country: country || 'BJ',
     amount: Number(amount),
     currency: 'XOF',
@@ -169,6 +193,7 @@ async function getPayout(idOrReference) {
 
 module.exports = {
   normalizeBeninPhone,
+  toSebpaySlug,
   detectOperator,
   normalizeInternationalPhone,
   initiateCollection,
