@@ -170,6 +170,10 @@ async function initiateCollection({ phone, operator, country, amount, externalRe
   };
   if (otpCode) payload.otp_code = otpCode;
 
+  // Log du payload exact envoyé à SebPay (utile pour confirmer que le slug
+  // opérateur part bien sans suffixe pays, ex: "mtn" et non "mtn-bj").
+  console.log('SebPay POST /collections ->', JSON.stringify(payload));
+
   return callSebpay('POST', '/collections', payload);
 }
 
