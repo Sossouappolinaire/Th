@@ -18,8 +18,12 @@ const PLATFORM_FEE_PERCENT = 5; // doit rester synchronisé avec config.js -> fe
 // synchronisé avec MIN_TRANSFER_AMOUNT_XOF côté server.js.
 const MIN_TRANSFER_AMOUNT_XOF = Math.ceil(MIN_PAYOUT_AMOUNT_XOF / (1 - PLATFORM_FEE_PERCENT / 100));
 
-const MTN_PREFIXES = ['90', '91', '96', '97', '98', '99'];
-const MOOV_PREFIXES = ['94', '95', '64', '65', '66', '67', '68', '69'];
+// Préfixes EZAB officiels ARCEP Bénin (liste publiée 02/2026), sans le "01".
+// ⚠️ Avec la portabilité, le préfixe n'est qu'une SUGGESTION : il ne doit
+// jamais bloquer un numéro ni écraser le réseau choisi par l'utilisateur.
+const MTN_PREFIXES = ['42', '46', '50', '51', '52', '53', '54', '56', '57', '59', '61', '62', '66', '67', '69', '90', '91', '96', '97'];
+const MOOV_PREFIXES = ['45', '55', '58', '60', '63', '64', '65', '68', '94', '95', '98', '99'];
+const CELTIIS_PREFIXES = ['20', '21', '22', '23', '24', '28', '29', '40', '41', '43', '44', '47', '48', '49', '92', '93'];
 
 const form = document.getElementById('transfer-form');
 const messageBox = document.getElementById('message');
@@ -96,12 +100,15 @@ function detectBjOperator(raw) {
   const prefix2 = digits.slice(2, 4);
   if (MTN_PREFIXES.includes(prefix2)) return 'mtn';
   if (MOOV_PREFIXES.includes(prefix2)) return 'moov';
+  if (CELTIIS_PREFIXES.includes(prefix2)) return 'celtiis';
   return null;
 }
 
 function isValidBjPhone(raw) {
   const digits = bjLocalDigits(raw);
-  return digits.length === 10 && digits.startsWith('01') && detectBjOperator(raw) !== null;
+  // Portabilité : on ne valide QUE le format (01 + 8 chiffres). Le réseau
+  // est celui choisi par l'utilisateur, pas celui déduit du préfixe.
+  return digits.length === 10 && digits.startsWith('01');
 }
 
 function isValidIntlPhone(raw, dialCode, expectedDigits) {
@@ -335,7 +342,7 @@ senderInput.addEventListener('input', () => {
   state.senderPhone = senderInput.value.trim();
   if (state.senderCountry === 'BJ' && !manualSenderOperatorPick) {
     const detected = detectBjOperator(state.senderPhone);
-    if (detected !== state.senderOperator) {
+    if (detected && detected !== state.senderOperator) {
       state.senderOperator = detected;
       senderOperatorChips.querySelectorAll('.chip').forEach((c) => {
         c.dataset.slug === detected ? applyChipSelected(c, findCountry('BJ')) : resetChip(c);
@@ -467,7 +474,7 @@ receiverInput.addEventListener('input', () => {
 
   if (state.country === 'BJ' && !manualOperatorPick) {
     const detected = detectBjOperator(state.receiverPhone);
-    if (detected !== state.operator) {
+    if (detected && detected !== state.operator) {
       state.operator = detected;
       operatorChips.querySelectorAll('.chip').forEach((c) => {
         c.dataset.slug === detected ? applyChipSelected(c, findCountry('BJ')) : resetChip(c);
@@ -576,7 +583,7 @@ function updateTrail(transfer) {
   }
 }
 
-async function pollTransfer(reference, { intervalMs = 3000, timeoutMs = 120000 } = {}) {
+async function pollTransfer(reference, { intervalMs = 3000, timeoutMs = 300000 } = {}) {
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
