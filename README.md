@@ -161,3 +161,32 @@ fusionpay-transfert/
 ├── package.json
 └── .env.example
 ```
+
+## Correctif — « Impossible de charger la liste des pays »
+
+Cause : l'appel direct `GET /operators` de SebPay renvoyait
+`IP_NOT_ALLOWED` (« Cette adresse IP n'est pas autorisée à utiliser cette clé
+API ») ou une liste vide. Le formulaire restait alors bloqué sur « Pays
+indisponibles pour le moment ».
+
+Corrections apportées :
+
+1. Les codes pays renvoyés par SebPay sont désormais normalisés (ISO-2, ISO-3
+   ou nom de pays) : plus aucun opérateur valide n'est ignoré silencieusement.
+2. Si SebPay est injoignable ou ne renvoie aucun opérateur, un **catalogue de
+   secours** (`config.js` → `FALLBACK_OPERATORS`) alimente le formulaire, avec
+   un avertissement visible. `/api/methods` ne renvoie plus d'erreur 502.
+3. `/api/countries` existe en alias de `/api/methods`.
+
+Pour retrouver la liste **temps réel** de SebPay : dans le tableau de bord
+SebPay, autorisez l'adresse IP sortante de votre service Render pour cette clé
+API (whitelist IP), puis redéployez.
+
+## Nouveautés
+
+- **Écran d'accueil animé** : barres de chargement (connexion, réseaux, pays)
+  qui montent jusqu'à 100 % — la dernière attend la vraie réponse de
+  `/api/methods` — puis le site s'ouvre.
+- **Reçu imprimé** (`/success.html`) : animation d'imprimante thermique, reçu
+  détaillé (expéditeur, destinataire, réseau, montant, référence) et bouton
+  « Imprimer ». Aperçu de démonstration : `/success.html?demo=1`.

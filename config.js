@@ -146,8 +146,69 @@ function logEnvStatus() {
   return report;
 }
 
+
+// --- Normalisation des codes pays -----------------------------------------
+// SebPay peut renvoyer un code ISO-2 ("BJ"), ISO-3 ("BEN") ou un nom de pays
+// selon les opérateurs. On ramène tout vers notre code ISO-2 minuscule, sinon
+// des opérateurs valides étaient silencieusement ignorés (liste vide côté
+// formulaire -> "Pays indisponibles pour le moment").
+const COUNTRY_ALIASES = {
+  ben: 'bj', civ: 'ci', tgo: 'tg', bfa: 'bf', sen: 'sn', ner: 'ne', mli: 'ml',
+  gnb: 'gw', cmr: 'cm', gab: 'ga', cog: 'cg', tcd: 'td', cod: 'cd', gin: 'gn',
+  gmb: 'gm', nga: 'ng', gha: 'gh', ken: 'ke', uga: 'ug', tza: 'tz',
+  benin: 'bj', "cote d'ivoire": 'ci', "côte d'ivoire": 'ci', 'ivory coast': 'ci',
+  togo: 'tg', 'burkina faso': 'bf', senegal: 'sn', 'sénégal': 'sn', niger: 'ne',
+  mali: 'ml', 'guinea-bissau': 'gw', 'guinee-bissau': 'gw', cameroun: 'cm',
+  cameroon: 'cm', gabon: 'ga', congo: 'cg', tchad: 'td', chad: 'td',
+  'rd congo': 'cd', 'drc': 'cd', guinee: 'gn', 'guinée': 'gn', guinea: 'gn',
+  gambie: 'gm', gambia: 'gm', nigeria: 'ng', 'nigéria': 'ng', ghana: 'gh',
+  kenya: 'ke', ouganda: 'ug', uganda: 'ug', tanzanie: 'tz', tanzania: 'tz',
+};
+
+function normalizeCountryCode(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return null;
+  if (COUNTRY_META[value]) return value;
+  if (COUNTRY_ALIASES[value]) return COUNTRY_ALIASES[value];
+  return null;
+}
+
+// --- Catalogue de secours -------------------------------------------------
+// Utilisé UNIQUEMENT si l'appel direct GET /operators échoue ou ne renvoie
+// aucun opérateur exploitable (clé API restreinte par IP, panne SebPay...).
+// Le formulaire reste alors utilisable et affiche un avertissement, au lieu
+// d'un écran bloqué "Pays indisponibles pour le moment".
+const FALLBACK_OPERATORS = {
+  bj: [['mtn', 'MTN MoMo'], ['moov', 'Moov Money'], ['celtiis', 'Celtiis Cash']],
+  ci: [['orange', 'Orange Money'], ['mtn', 'MTN MoMo'], ['moov', 'Moov Money'], ['wave', 'Wave']],
+  tg: [['moov', 'Moov Money'], ['togocom', 'T-Money']],
+  bf: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
+  sn: [['orange', 'Orange Money'], ['wave', 'Wave'], ['free', 'Free Money']],
+  ml: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
+  ne: [['airtel', 'Airtel Money'], ['moov', 'Moov Money']],
+  gn: [['orange', 'Orange Money'], ['mtn', 'MTN MoMo']],
+  cm: [['mtn', 'MTN MoMo'], ['orange', 'Orange Money']],
+  ga: [['airtel', 'Airtel Money'], ['moov', 'Moov Money']],
+  cg: [['mtn', 'MTN MoMo'], ['airtel', 'Airtel Money']],
+  cd: [['orange', 'Orange Money'], ['airtel', 'Airtel Money'], ['mtn', 'MTN MoMo']],
+  gh: [['mtn', 'MTN MoMo'], ['vodafone', 'Telecel Cash'], ['airteltigo', 'AirtelTigo Money']],
+};
+
+function fallbackCountries() {
+  return Object.keys(FALLBACK_OPERATORS).map((code) => ({
+    code,
+    country: COUNTRY_META[code].name,
+    currency: COUNTRY_META[code].currency,
+    paymentMethods: FALLBACK_OPERATORS[code].map(([key, name]) => ({
+      key, name, otpRequired: false, ussdCode: null,
+    })),
+  }));
+}
+
 module.exports = config;
 module.exports.countryMeta = countryMeta;
+module.exports.normalizeCountryCode = normalizeCountryCode;
+module.exports.fallbackCountries = fallbackCountries;
 module.exports.COUNTRY_META = COUNTRY_META;
 module.exports.checkEnvVars = checkEnvVars;
 module.exports.logEnvStatus = logEnvStatus;

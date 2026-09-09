@@ -81,9 +81,10 @@ function groupOperatorsByCountry(operators) {
     // ou directement un code selon les opérateurs ; on gère les deux cas.
     const rawCode = (op.country && (op.country.code || op.country.id)) || op.country_code || op.country;
     if (!rawCode) return;
-    const code = String(rawCode).toLowerCase();
+    const code = config.normalizeCountryCode(rawCode);
+    if (!code) return; // pays inconnu de notre référentiel (devise non fiable) -> ignoré par sécurité
     const meta = config.countryMeta(code);
-    if (!meta) return; // pays inconnu de notre référentiel (devise non fiable) -> ignoré par sécurité
+    if (!meta) return;
 
     if (!byCountry.has(code)) {
       byCountry.set(code, {
@@ -94,8 +95,11 @@ function groupOperatorsByCountry(operators) {
       });
     }
 
+    const slug = op.slug || op.code || op.key;
+    if (!slug) return;
+    if (byCountry.get(code).paymentMethods.some((m) => m.key === slug)) return;
     byCountry.get(code).paymentMethods.push({
-      key: op.slug,
+      key: slug,
       name: op.name,
       otpRequired: Boolean(op.otp_required),
       ussdCode: op.ussd_code || null,
@@ -108,8 +112,25 @@ function groupOperatorsByCountry(operators) {
 async function getMethods({ forceRefresh = false } = {}) {
   const isStale = Date.now() - methodsCache.fetchedAt > METHODS_CACHE_TTL_MS;
   if (forceRefresh || isStale || methodsCache.data.length === 0) {
-    const operators = await sebpay.listOperators();
-    methodsCache = { data: groupOperatorsByCountry(operators), fetchedAt: Date.now() };
+    try {
+      const operators = await sebpay.listOperators();
+      const grouped = groupOperatorsByCountry(operators);
+      if (grouped.length > 0) {
+        methodsCache = { data: grouped, fetchedAt: Date.now(), source: 'sebpay' };
+      } else {
+        console.warn('SebPay a répondu sans opérateur exploitable : catalogue de secours utilisé.');
+        methodsCache = { data: config.fallbackCountries(), fetchedAt: Date.now(), source: 'fallback' };
+      }
+    } catch (error) {
+      console.error('GET /operators SebPay a échoué :', error.message, '- catalogue de secours utilisé.');
+      // On ne laisse JAMAIS le formulaire sans pays : catalogue de secours,
+      // et cache court pour retenter rapidement l'appel direct.
+      methodsCache = {
+        data: config.fallbackCountries(),
+        fetchedAt: Date.now() - (METHODS_CACHE_TTL_MS - 60 * 1000),
+        source: 'fallback',
+      };
+    }
   }
   return methodsCache.data;
 }
@@ -146,19 +167,32 @@ function webhookUrlFor(name) {
 // Liste des pays et opérateurs Mobile Money pris en charge (pour peupler le
 // formulaire côté front-end — expéditeur ET destinataire —, sans exposer de
 // clé API côté client).
-app.get('/api/methods', async (req, res) => {
+async function methodsHandler(req, res) {
   try {
     const data = await getMethods();
     const enriched = data.map((country) => ({
       ...country,
       phoneRule: getPhoneRule(country.code),
     }));
-    return res.json({ success: true, data: enriched });
+    return res.json({
+      success: true,
+      source: methodsCache.source || 'sebpay',
+      degraded: methodsCache.source === 'fallback',
+      data: enriched,
+    });
   } catch (error) {
     console.error('Erreur récupération des opérateurs SebPay :', error.message);
-    return res.status(502).json({ success: false, message: "Impossible de récupérer la liste des réseaux disponibles." });
+    const data = config.fallbackCountries().map((country) => ({
+      ...country,
+      phoneRule: getPhoneRule(country.code),
+    }));
+    return res.json({ success: true, source: 'fallback', degraded: true, data });
   }
-});
+}
+
+app.get('/api/methods', methodsHandler);
+// Alias historique : certaines versions du front appelaient /api/countries.
+app.get('/api/countries', methodsHandler);
 
 // --- Étape 1 : créer le transfert et lancer la COLLECTION chez l'expéditeur
 app.post('/api/transfer', async (req, res) => {
