@@ -1,363 +1,273 @@
 // server.js
-// Point d'entrée du serveur. Sert le front-end statique et expose l'API
-// de paiement qui appelle SebPay côté serveur (les clés API ne sont jamais
-// exposées au navigateur).
+// Point d'entrée du serveur. Sert le front-end statique et expose l'API de
+// transfert réseau -> réseau, qui combine les DEUX API SebPay :
 //
-// Depuis le 01/09/2026 (refonte) : l'application n'encaisse QUE — il n'y a
-// plus de décaissement (payout) automatique vers un destinataire. L'argent
-// payé par l'utilisateur reste dans le wallet SebPay du propriétaire de la
-// plateforme. Seul un remboursement MANUEL depuis le panneau admin peut
-// renvoyer l'argent à l'expéditeur (cas d'un client à rembourser).
+//   1) COLLECTION : on encaisse chez l'EXPÉDITEUR (demande envoyée
+//               directement à son numéro Mobile Money — USSD/notification —
+//               ou lien à ouvrir dans un nouvel onglet pour certains
+//               opérateurs comme Wave).
+//   2) Webhook collection (status: approved) : dès que l'encaissement est
+//               confirmé, on déclenche AUTOMATIQUEMENT le PAYOUT vers le
+//               DESTINATAIRE.
+//   3) Webhook payout (status: approved / rejected) : confirme (ou non)
+//               l'arrivée de l'argent chez le destinataire.
 //
-// Logique :
-//   1) POST /api/transfer      -> initie une COLLECTE chez le payeur, dans
-//        SON pays (n'importe lequel des pays de countries.js).
-//   2) POST /api/webhook       -> SebPay notifie le statut final.
-//        - collecte "approved" -> le paiement est marqué "completed"
-//          directement (aucun décaissement n'est déclenché).
-//        - "rejected"          -> le paiement est marqué "failed".
-//   3) GET /api/transfer/:ref  -> le front-end interroge l'état du paiement.
-//   4) GET /api/countries      -> liste des pays/réseaux Mobile Money proposés.
+// Flux complet d'un transfert :
+//   1) GET  /api/methods                 -> liste (mise en cache) des pays et
+//                                            opérateurs Mobile Money disponibles,
+//                                            interrogée en direct auprès de
+//                                            SebPay (jamais codée en dur).
+//   2) POST /api/transfer                -> crée le transfert, lance la
+//                                            COLLECTION chez l'expéditeur.
+//                                            Renvoie soit un lien de paiement
+//                                            à ouvrir dans un nouvel onglet
+//                                            (Wave), soit rien (l'expéditeur
+//                                            valide directement sur son
+//                                            téléphone via USSD/notification).
+//   3) POST /api/webhook/sebpay/collection -> SebPay confirme l'encaissement
+//                                            -> on lance alors le PAYOUT.
+//   4) POST /api/webhook/sebpay/payout     -> SebPay confirme (ou non)
+//                                            l'envoi au destinataire.
+//   5) GET  /api/transfer/:id            -> le front-end interroge l'état
+//                                            (polling) ; en secours, si l'état
+//                                            reste "pending" trop longtemps,
+//                                            on revérifie directement auprès
+//                                            de SebPay (au cas où un webhook
+//                                            aurait été manqué).
 //
-// Panneau ADMIN (protégé par un jeton, voir config.admin.token) :
-//   5) GET  /api/admin/pending              -> liste tous les paiements/remboursements en attente.
-//   6) POST /api/admin/fix-pending          -> réconcilie TOUS les paiements en
-//        attente avec l'état réel chez SebPay (rattrape les webhooks manqués).
-//   7) POST /api/admin/transfer/:ref/check  -> réconcilie UN paiement et renvoie son état réel.
-//   8) POST /api/admin/transfer/:ref/refund -> rembourse un paiement déjà encaissé
-//        (renvoie l'argent au numéro payeur).
-//   9) GET  /api/admin/all                  -> liste TOUS les paiements (tout statut confondu,
-//        historique complet : référence, date/heure, pays, numéro, nom, montant, statut)
-//        + la somme totale actuellement encaissée dans le compte SebPay de l'administrateur.
+// ⚠️ Point d'attention (à surveiller en production) : si la COLLECTION
+// réussit mais que le PAYOUT échoue ensuite (réseau destinataire
+// indisponible, solde marchand insuffisant, etc.), l'argent a déjà été
+// prélevé chez l'expéditeur. Selon la doc SebPay, un payout en échec
+// rembourse automatiquement VOTRE WALLET SebPay — pas directement
+// l'expéditeur. Le statut du transfert passe alors à "payout_failed" : à
+// vous de mettre en place un remboursement de l'expéditeur, une nouvelle
+// tentative de payout, ou un suivi manuel.
+//
+// ⚠️ Limite volontaire : ce service ne fait AUCUNE conversion de devise. Un
+// transfert n'est autorisé que si le pays de l'expéditeur et celui du
+// destinataire partagent la même devise (ex : Bénin -> Sénégal, tous deux en
+// XOF). Un transfert entre devises différentes est refusé explicitement
+// plutôt que d'appliquer un taux de change inventé.
 
 const crypto = require('crypto');
-const fs = require('fs');
 const express = require('express');
 const path = require('path');
 const config = require('./config');
 const sebpay = require('./sebpayService');
-const countries = require('./countries');
+const { getPhoneRule } = require('./phoneRules');
 
 const app = express();
-
-// ⚠️ SebPay refuse tout PAYOUT sous un certain seuil ("amount_below_min").
-// Un remboursement passe par un payout : un montant collecté sous ce seuil
-// pourrait donc être encaissé mais ne pourrait JAMAIS être remboursé
-// automatiquement par l'API. On bloque donc ici, avant la collecte.
-// ⚠️ 100 XOF n'est PAS confirmé par la documentation officielle SebPay (elle
-// ne précise aucun montant minimum) : c'est une valeur choisie sans test
-// réel d'un payout à ce montant. Si un remboursement à 100 XOF échoue en
-// pratique côté SebPay, remonter ce seuil (300 XOF avait été confirmé par
-// un test réel, voir historique de ce fichier).
-const MIN_PAYOUT_AMOUNT_XOF = 100;
-const MIN_TRANSFER_AMOUNT_XOF = MIN_PAYOUT_AMOUNT_XOF;
-
-// ---------------------------------------------------------------------------
-// Persistance des paiements (fichier JSON local)
-// ---------------------------------------------------------------------------
-// ⚠️ L'API SebPay n'expose AUCUNE route pour "lister tout ce qui est en
-// attente" : GET /collections/{id} et GET /payouts/{id} exigent de déjà
-// connaître la référence. Il est donc impossible d'interroger SebPay au
-// démarrage pour retrouver les paiements oubliés — l'appli DOIT garder
-// elle-même la liste des références à vérifier. D'où cette persistance sur
-// disque : elle survit à un crash/redémarrage du process (contrairement à un
-// Map en mémoire), mais PAS à un redéploiement Render qui recrée le disque.
-// Pour une garantie totale même après redéploiement, remplacez ce fichier
-// JSON par une vraie base de données (Postgres, SQLite sur un Render Disk...).
-const DATA_DIR = path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'transfers.json');
-
-// Stockage en mémoire des paiements, rechargé depuis DATA_FILE au démarrage
-// puis réécrit sur disque après chaque changement.
-//
-// Un même paiement peut être indexé sous plusieurs clés (sa référence
-// d'origine "TRF-...", puis "TRF-...-REFUND-..." lors d'un remboursement)
-// mais `transfer.reference` pointe toujours vers la référence CANONIQUE
-// (celle d'origine) : c'est elle qu'il faut utiliser pour dédupliquer.
-const transfers = new Map();
-
-/** Recharge les paiements depuis le fichier JSON au démarrage. */
-function loadTransfers() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return;
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    const entries = JSON.parse(raw); // [[key, transferObject], ...]
-
-    // Reconstitue le partage d'objet entre alias d'une même transaction
-    // (plusieurs clés doivent pointer vers LE MÊME objet, comme en mémoire).
-    const canonicalByReference = new Map();
-    for (const [, transfer] of entries) {
-      if (!canonicalByReference.has(transfer.reference)) {
-        canonicalByReference.set(transfer.reference, transfer);
-      }
-    }
-    for (const [key, transfer] of entries) {
-      transfers.set(key, canonicalByReference.get(transfer.reference) || transfer);
-    }
-    console.log(`Paiements rechargés depuis le disque : ${canonicalByReference.size} transaction(s).`);
-  } catch (error) {
-    console.error('Impossible de recharger data/transfers.json :', error.message);
-  }
-}
-
-/** Sauvegarde l'état courant de tous les paiements sur disque. */
-function saveTransfers() {
-  try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(DATA_FILE, JSON.stringify([...transfers.entries()], null, 2));
-  } catch (error) {
-    console.error('Impossible d\'écrire data/transfers.json :', error.message);
-  }
-}
-
-loadTransfers();
-
-// Capture le corps brut (nécessaire pour vérifier la signature HMAC du webhook)
-app.use(
-  express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf;
-    },
-  })
-);
-
+// On conserve le corps brut de la requête (req.rawBody) pour pouvoir
+// vérifier la signature HMAC des webhooks SebPay, qui est calculée sur les
+// octets exacts envoyés — pas sur une re-sérialisation JSON.
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---------------------------------------------------------------------------
-// Aides internes
-// ---------------------------------------------------------------------------
+// Stockage en mémoire des transferts (suffisant pour une démo ; utilisez une
+// vraie base de données en production — l'état est perdu à chaque
+// redémarrage/redéploiement).
+const transfers = new Map(); // transferId -> transfer
 
-function nowIso() {
-  return new Date().toISOString();
-}
+// --- Cache de la liste des pays / opérateurs (interrogée en direct) -----
+let methodsCache = { data: [], fetchedAt: 0 };
+const METHODS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — la doc SebPay recommande de ne pas figer cette liste trop longtemps (otp_required peut évoluer)
 
-/** Retrouve un paiement à partir de n'importe quelle référence connue
- * (référence d'origine, référence "-REFUND-..."...). */
-function findTransfer(rawReference) {
-  const reference = String(rawReference || '').trim();
-  if (!reference) return null;
-  if (transfers.has(reference)) return transfers.get(reference);
-  return null;
-}
+function groupOperatorsByCountry(operators) {
+  const byCountry = new Map(); // code pays (minuscule) -> { code, country, currency, paymentMethods: [] }
 
-/** Liste unique (dédupliquée) des paiements encore actionnables :
- * 'pending' (collecte ou remboursement en cours). */
-function listPendingTransfers() {
-  const seen = new Set();
-  const pending = [];
-  for (const transfer of transfers.values()) {
-    if (seen.has(transfer.reference)) continue;
-    seen.add(transfer.reference);
-    if (transfer.status === 'pending') pending.push(transfer);
-  }
-  return pending.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-}
+  operators.forEach((op) => {
+    // Le champ "country" renvoyé par SebPay peut être un objet ({code, name})
+    // ou directement un code selon les opérateurs ; on gère les deux cas.
+    const rawCode = (op.country && (op.country.code || op.country.id)) || op.country_code || op.country;
+    if (!rawCode) return;
+    const code = String(rawCode).toLowerCase();
+    const meta = config.countryMeta(code);
+    if (!meta) return; // pays inconnu de notre référentiel (devise non fiable) -> ignoré par sécurité
 
-/** Liste unique (dédupliquée) de TOUS les paiements, quel que soit leur
- * statut (pending, completed, failed, refunded) — sert au panneau admin
- * "historique complet" avec référence, date/heure, pays, numéro, nom. */
-function listAllTransfers() {
-  const seen = new Set();
-  const all = [];
-  for (const transfer of transfers.values()) {
-    if (seen.has(transfer.reference)) continue;
-    seen.add(transfer.reference);
-    all.push(transfer);
-  }
-  return all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-}
-
-/** Somme totale actuellement retenue dans le wallet SebPay de
- * l'administrateur : les paiements "completed" (encaissés et jamais
- * remboursés). Un paiement "refunded" ne compte plus (l'argent est reparti
- * vers le payeur). */
-function totalAdminAccountAmount() {
-  let total = 0;
-  for (const transfer of listAllTransfers()) {
-    if (transfer.status === 'completed') total += Number(transfer.amount) || 0;
-  }
-  return total;
-}
-
-/** Traite le résultat (webhook OU vérification manuelle) d'une collecte.
- * Aucun décaissement automatique n'est déclenché : un paiement approuvé est
- * directement marqué "completed", l'argent restant dans le wallet SebPay. */
-function processCollectionResult(transfer, status, transactionId) {
-  transfer.collectionTransactionId = transactionId || transfer.collectionTransactionId;
-
-  if (status === 'approved') {
-    transfer.status = 'completed';
-    transfer.message = 'Paiement reçu avec succès.';
-    transfer.updatedAt = nowIso();
-  } else if (status === 'rejected') {
-    transfer.status = 'failed';
-    transfer.message = 'Le paiement a été refusé ou a expiré.';
-    transfer.updatedAt = nowIso();
-  }
-  // status === 'pending' : rien à faire, on attend toujours.
-}
-
-/** Interroge SebPay pour connaître l'état RÉEL d'un paiement et met à jour
- * notre état local en conséquence (rattrape un webhook manqué). Renvoie
- * true si l'état local a changé. */
-async function reconcileTransfer(transfer) {
-  const statusBefore = transfer.status;
-  const stageBefore = transfer.stage;
-
-  if (transfer.stage === 'collection') {
-    const idOrRef = transfer.collectionTransactionId || transfer.reference;
-    const collection = await sebpay.getCollection(idOrRef);
-    processCollectionResult(transfer, collection.status, collection.transaction_id);
-  } else if (transfer.stage === 'refund') {
-    const idOrRef = transfer.refundTransactionId || transfer.lastRefundReference || `${transfer.reference}-REFUND`;
-    const payout = await sebpay.getPayout(idOrRef);
-    if (payout.status === 'approved') {
-      transfer.status = 'refunded';
-      transfer.message = 'Argent remboursé avec succès au numéro payeur.';
-      transfer.updatedAt = nowIso();
-    } else if (payout.status === 'rejected') {
-      transfer.status = 'completed'; // le remboursement a échoué, l'argent reste encaissé
-      transfer.message = 'Le remboursement au numéro payeur a échoué.';
-      transfer.updatedAt = nowIso();
+    if (!byCountry.has(code)) {
+      byCountry.set(code, {
+        code,
+        country: meta.name,
+        currency: meta.currency,
+        paymentMethods: [],
+      });
     }
-  }
 
-  const changed = transfer.status !== statusBefore || transfer.stage !== stageBefore;
-  if (changed) saveTransfers();
-  return changed;
+    byCountry.get(code).paymentMethods.push({
+      key: op.slug,
+      name: op.name,
+      otpRequired: Boolean(op.otp_required),
+      ussdCode: op.ussd_code || null,
+    });
+  });
+
+  return Array.from(byCountry.values());
 }
 
-// ---------------------------------------------------------------------------
-// Routes publiques
-// ---------------------------------------------------------------------------
+async function getMethods({ forceRefresh = false } = {}) {
+  const isStale = Date.now() - methodsCache.fetchedAt > METHODS_CACHE_TTL_MS;
+  if (forceRefresh || isStale || methodsCache.data.length === 0) {
+    const operators = await sebpay.listOperators();
+    methodsCache = { data: groupOperatorsByCountry(operators), fetchedAt: Date.now() };
+  }
+  return methodsCache.data;
+}
 
-// Liste des pays et réseaux Mobile Money disponibles (alimente le front-end)
-app.get('/api/countries', (req, res) => {
-  res.json({ success: true, countries: countries.publicCountries() });
+function findMethod(countries, countryCode, operatorSlug) {
+  const country = countries.find((c) => c.code === countryCode);
+  if (!country) return null;
+  const method = (country.paymentMethods || []).find((m) => m.key === operatorSlug);
+  if (!method) return null;
+  return { country, method };
+}
+
+function validatePhone(phone, countryCode, label) {
+  const digitsOnly = String(phone || '').replace(/\D/g, '');
+  const rule = getPhoneRule(countryCode);
+  if (rule && typeof rule.digits === 'number' && digitsOnly.length !== rule.digits) {
+    return { error: `Numéro invalide pour ${label} : ${rule.digits} chiffres attendus (ex : ${rule.example}).` };
+  }
+  if ((!rule || typeof rule.digits !== 'number') && (digitsOnly.length < 6 || digitsOnly.length > 12)) {
+    return { error: `Numéro de téléphone (${label}) invalide.` };
+  }
+  return { digitsOnly };
+}
+
+function fullInternationalPhone(countryCode, digitsOnly) {
+  const rule = getPhoneRule(countryCode);
+  return rule && rule.dialCode ? `${rule.dialCode}${digitsOnly}` : digitsOnly;
+}
+
+function webhookUrlFor(name) {
+  return `${config.sebpay.publicBaseUrl}/api/webhook/sebpay/${name}`;
+}
+
+// Liste des pays et opérateurs Mobile Money pris en charge (pour peupler le
+// formulaire côté front-end — expéditeur ET destinataire —, sans exposer de
+// clé API côté client).
+app.get('/api/methods', async (req, res) => {
+  try {
+    const data = await getMethods();
+    const enriched = data.map((country) => ({
+      ...country,
+      phoneRule: getPhoneRule(country.code),
+    }));
+    return res.json({ success: true, data: enriched });
+  } catch (error) {
+    console.error('Erreur récupération des opérateurs SebPay :', error.message);
+    return res.status(502).json({ success: false, message: "Impossible de récupérer la liste des réseaux disponibles." });
+  }
 });
 
-/** Résout et valide un contact (pays + numéro + opérateur) pour le payeur.
- * Pour le Bénin spécifiquement : normalisation tolérante à l'ancien format
- * 8 chiffres (voir normalizeBeninPhone) et détection auto du réseau par
- * préfixe si l'opérateur n'est pas fourni. Pour les autres pays : l'appelant
- * doit fournir l'opérateur (pas de plan de numérotation par réseau connu).
- * Renvoie { country, phone, operator } ou { error }. */
-function resolveContact(countryCode, rawPhone, operatorSlug) {
-  const country = countries.getCountry(countryCode);
-  if (!country) return { error: 'Pays invalide.' };
-
-  const normalizedPhone =
-    country.code === 'BJ'
-      ? sebpay.normalizeBeninPhone(rawPhone)
-      : sebpay.normalizeInternationalPhone(rawPhone, country.dialCode, country.phoneDigits);
-
-  if (!normalizedPhone) {
-    return {
-      error:
-        country.code === 'BJ'
-          ? 'Numéro béninois invalide.'
-          : `Numéro invalide (le format ${country.name} attend ${country.phoneDigits} chiffres après l'indicatif +${country.dialCode}).`,
-    };
-  }
-
-  let resolvedOperatorSlug = operatorSlug;
-  if (!resolvedOperatorSlug && country.code === 'BJ') {
-    resolvedOperatorSlug = sebpay.detectOperator(normalizedPhone.slice(3));
-  }
-  const operator = countries.getOperator(country.code, resolvedOperatorSlug);
-  if (!operator) {
-    return { error: `Réseau Mobile Money non reconnu pour ${country.name}.` };
-  }
-
-  return { country, phone: normalizedPhone, operator };
-}
-
-// Route principale : déclenche la collecte chez le payeur, dans SON pays.
-// Aucun destinataire, aucun décaissement : l'argent reste sur la plateforme.
-//
-// Corps attendu :
-//   - senderCountry, senderPhone, senderOperator : pays + numéro + réseau du payeur
-//   - senderOtpCode                                : requis si le réseau du payeur l'exige (voir otpRequired)
-//   - amount                                       : montant en XOF (obligatoire)
+// --- Étape 1 : créer le transfert et lancer la COLLECTION chez l'expéditeur
 app.post('/api/transfer', async (req, res) => {
-  const { senderCountry, senderPhone, senderOperator, senderOtpCode, senderName, amount } = req.body;
+  const {
+    senderPhone, senderName, senderCountryCode, senderOperator, otpCode,
+    countryCode, withdrawMode, phone, recipientName, amount,
+  } = req.body;
 
-  if (!senderCountry || !senderPhone || !amount) {
+  if (!senderPhone || !senderName || !senderCountryCode || !senderOperator) {
+    return res.status(400).json({ success: false, message: 'senderPhone, senderName, senderCountryCode et senderOperator sont requis.' });
+  }
+  if (!countryCode || !withdrawMode || !phone || !recipientName || !amount) {
     return res.status(400).json({
       success: false,
-      message: 'senderCountry, senderPhone et amount sont requis.',
+      message: 'countryCode, withdrawMode, phone, recipientName et amount (destinataire) sont requis.',
     });
   }
-
-  const trimmedSenderName = String(senderName || '').trim();
-  if (!trimmedSenderName) {
-    return res.status(400).json({
-      success: false,
-      message: 'Le nom du payeur est requis.',
-    });
+  if (Number(amount) <= 0) {
+    return res.status(400).json({ success: false, message: 'Montant invalide.' });
   }
-
-  // SebPay refuse tout PAYOUT sous 300 XOF ("amount_below_min"). Comme un
-  // éventuel remboursement passe par un payout, un montant sous ce seuil
-  // pourrait être encaissé mais ne pourrait JAMAIS être remboursé
-  // automatiquement par l'API. On bloque donc ici, avant la collecte.
-  if (!amount || Number(amount) < MIN_TRANSFER_AMOUNT_XOF) {
-    return res.status(400).json({
-      success: false,
-      message: `Montant invalide : le minimum autorisé est de ${MIN_TRANSFER_AMOUNT_XOF} XOF (SebPay pourrait refuser tout remboursement sous ce seuil).`,
-    });
-  }
-
-  const sender = resolveContact(senderCountry, senderPhone, senderOperator);
-  if (sender.error) {
-    return res.status(400).json({ success: false, message: sender.error });
-  }
-  if (sender.operator.otpRequired && !senderOtpCode) {
-    return res.status(400).json({
-      success: false,
-      message: `Le réseau ${sender.operator.name} exige un code de confirmation : composez ${sender.operator.ussdCode} sur votre téléphone puis saisissez le code reçu.`,
-      code: 'OTP_REQUIRED',
-    });
-  }
-
-  const reference = `TRF-${Date.now()}`;
 
   try {
-    const collection = await sebpay.initiateCollection({
-      phone: sender.phone,
-      operator: sender.operator.slug,
-      country: sender.country.code,
+    const countries = await getMethods();
+
+    const senderMatch = findMethod(countries, senderCountryCode, senderOperator);
+    if (!senderMatch) {
+      return res.status(400).json({ success: false, message: 'Pays ou réseau expéditeur non reconnu. Merci de resélectionner un réseau dans la liste.' });
+    }
+    const recipientMatch = findMethod(countries, countryCode, withdrawMode);
+    if (!recipientMatch) {
+      return res.status(400).json({ success: false, message: 'Pays ou réseau destinataire non reconnu. Merci de resélectionner un réseau dans la liste.' });
+    }
+
+    // Pas de conversion de devise gérée par ce service : on refuse plutôt
+    // que d'inventer un taux de change.
+    if (senderMatch.country.currency !== recipientMatch.country.currency) {
+      return res.status(400).json({
+        success: false,
+        message: `Ce service ne prend pas en charge les transferts entre devises différentes (${senderMatch.country.currency} → ${recipientMatch.country.currency}).`,
+      });
+    }
+
+    const senderPhoneCheck = validatePhone(senderPhone, senderCountryCode, "l'expéditeur");
+    if (senderPhoneCheck.error) return res.status(400).json({ success: false, message: senderPhoneCheck.error });
+
+    const recipientPhoneCheck = validatePhone(phone, countryCode, `le destinataire (${recipientMatch.country.country})`);
+    if (recipientPhoneCheck.error) return res.status(400).json({ success: false, message: recipientPhoneCheck.error });
+
+    if (senderMatch.method.otpRequired && !otpCode) {
+      return res.status(400).json({
+        success: false,
+        message: `Code OTP requis pour ${senderMatch.method.name}. Composez ${senderMatch.method.ussdCode || 'le code USSD indiqué'} sur votre téléphone, puis saisissez le code reçu.`,
+      });
+    }
+
+    const transferId = crypto.randomUUID();
+    const currency = senderMatch.country.currency;
+
+    const transfer = {
+      transferId,
+      stage: 'collection_pending', // collection_pending -> collection_failed | payout_pending -> completed | payout_failed
+      message: "En attente du paiement de l'expéditeur.",
+      sender: {
+        phone: senderPhoneCheck.digitsOnly,
+        name: senderName,
+        countryCode: senderCountryCode,
+        countryName: senderMatch.country.country,
+        networkName: senderMatch.method.name,
+      },
+      recipient: {
+        countryCode,
+        countryName: recipientMatch.country.country,
+        currency,
+        withdrawMode,
+        networkName: recipientMatch.method.name,
+        phone: recipientPhoneCheck.digitsOnly,
+        name: recipientName,
+        amount: Number(amount),
+      },
+      collectionId: null,
+      payoutId: null,
+      createdAt: new Date().toISOString(),
+    };
+    transfers.set(transferId, transfer);
+
+    const collectionResult = await sebpay.initiateCollection({
       amount,
-      externalReference: reference,
-      otpCode: senderOtpCode,
+      currency,
+      phone: fullInternationalPhone(senderCountryCode, senderPhoneCheck.digitsOnly),
+      operator: senderOperator,
+      country: senderCountryCode.toUpperCase(),
+      externalReference: transferId,
+      callbackUrl: webhookUrlFor('collection'),
+      otpCode,
     });
 
-    transfers.set(reference, {
-      reference,
-      stage: 'collection',
-      status: 'pending',
-      senderCountry: sender.country.code,
-      senderOperator: sender.operator.slug,
-      senderPhone: sender.phone,
-      senderName: trimmedSenderName,
-      amount: Number(amount),
-      collectionTransactionId: collection.transaction_id || null,
-      refundTransactionId: null,
-      lastRefundReference: null,
-      message: 'Paiement initié. En attente de validation sur votre téléphone.',
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-    });
-    saveTransfers();
+    transfer.collectionId = collectionResult.transaction_id;
 
     return res.json({
       success: true,
-      status: 'pending',
-      reference,
-      message: collection.message || 'Paiement initié. Validez la transaction sur votre téléphone.',
+      transferId,
+      // Présent uniquement pour certains opérateurs (ex : Wave) : à ouvrir
+      // dans un NOUVEL ONGLET, conformément à la doc SebPay. Absent sinon :
+      // l'expéditeur valide directement sur son téléphone (USSD/notification).
+      paymentUrl: collectionResult.provider_link || null,
+      message: collectionResult.message || 'Demande de paiement envoyée à l\'expéditeur.',
     });
   } catch (error) {
-    console.error('Erreur de collecte SebPay :', error.message, error.raw || '');
+    console.error('Erreur création transfert (collection) :', error.message, error.raw || '');
     return res.status(400).json({
       success: false,
       message: error.message,
@@ -366,229 +276,134 @@ app.post('/api/transfer', async (req, res) => {
   }
 });
 
-// Permet au front-end de suivre l'état d'un paiement (polling)
-app.get('/api/transfer/:reference', (req, res) => {
-  const transfer = transfers.get(req.params.reference);
+// --- Étape 2 : suivi (polling) d'un transfert par le front-end ----------
+// Filet de sécurité : si l'état est encore "pending" et n'a pas bougé
+// depuis un moment, on revérifie directement auprès de SebPay, au cas où un
+// webhook aurait été manqué (la doc SebPay présente le webhook comme le
+// mécanisme principal et le polling comme un complément).
+app.get('/api/transfer/:transferId', async (req, res) => {
+  const transfer = transfers.get(req.params.transferId);
   if (!transfer) {
-    return res.status(404).json({ success: false, message: 'Paiement introuvable.' });
+    return res.status(404).json({ success: false, message: 'Transfert introuvable.' });
   }
+
+  try {
+    if (transfer.stage === 'collection_pending' && transfer.collectionId) {
+      const status = await sebpay.getCollection(transfer.collectionId);
+      if (status.status === 'approved') {
+        await triggerPayout(transfer);
+      } else if (status.status === 'rejected') {
+        transfer.stage = 'collection_failed';
+        transfer.message = "Le paiement de l'expéditeur a échoué ou a été refusé.";
+      }
+    } else if (transfer.stage === 'payout_pending' && transfer.payoutId) {
+      const status = await sebpay.getPayout(transfer.payoutId);
+      if (status.status === 'approved') {
+        transfer.stage = 'completed';
+        transfer.message = 'Transfert terminé avec succès.';
+      } else if (status.status === 'rejected') {
+        transfer.stage = 'payout_failed';
+        transfer.message = "Paiement reçu chez l'expéditeur, mais l'envoi au destinataire a échoué. Contactez le support.";
+      }
+    }
+  } catch (error) {
+    // On ignore silencieusement une erreur de revérification : le webhook
+    // reste la source de vérité principale, ce polling n'est qu'un filet.
+    console.warn('Revérification SebPay échouée pour', transfer.transferId, ':', error.message);
+  }
+
   return res.json({ success: true, transfer });
 });
 
-// Webhook : SebPay appelle cette URL pour notifier le statut final d'une transaction
-function isValidSignature(req) {
-  const signature = req.get('X-SebPay-Signature');
-  if (!signature || !req.rawBody || !config.sebpay.secretKey) return false;
+async function triggerPayout(transfer) {
+  transfer.stage = 'payout_pending';
+  transfer.message = 'Paiement reçu, envoi au destinataire en cours...';
 
-  const expected = crypto
-    .createHmac('sha256', config.sebpay.secretKey)
-    .update(req.rawBody)
-    .digest('hex');
+  const payoutResult = await sebpay.initiatePayout({
+    recipientName: transfer.recipient.name,
+    phone: fullInternationalPhone(transfer.recipient.countryCode, transfer.recipient.phone),
+    operator: transfer.recipient.withdrawMode,
+    country: transfer.recipient.countryCode.toUpperCase(),
+    amount: transfer.recipient.amount,
+    currency: transfer.recipient.currency,
+    externalReference: transfer.transferId,
+    callbackUrl: webhookUrlFor('payout'),
+    description: `Transfert Kouamé Paiement ${transfer.transferId}`,
+  });
 
-  try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  } catch {
-    return false;
-  }
+  transfer.payoutId = payoutResult.transaction_id;
 }
 
-app.post('/api/webhook', async (req, res) => {
-  if (!isValidSignature(req)) {
-    console.warn('Webhook SebPay : signature invalide, requête ignorée.');
+// --- Webhook COLLECTION : encaissement chez l'expéditeur ------------------
+app.post('/api/webhook/sebpay/collection', (req, res) => {
+  const signature = req.get('X-SebPay-Signature');
+  if (!sebpay.verifyWebhookSignature(req.rawBody, signature)) {
+    console.warn('Webhook SebPay (collection) : signature invalide, requête ignorée.');
     return res.sendStatus(401);
   }
 
-  const { external_reference: reference, status, transaction_id: transactionId } = req.body;
-  console.log('Webhook SebPay reçu :', req.body);
-
-  // Répondre 200 immédiatement pour respecter les bonnes pratiques SebPay ;
-  // le reste du traitement continue en arrière-plan.
+  // Répondre 200 immédiatement ; le reste du traitement continue ensuite.
   res.sendStatus(200);
 
-  const transfer = transfers.get(reference);
+  const body = req.body || {};
+  console.log('Webhook SebPay (collection) reçu :', body);
+
+  const { external_reference: transferId, status } = body;
+  const transfer = transferId ? transfers.get(transferId) : null;
   if (!transfer) return; // référence inconnue
 
-  if (transfer.stage === 'collection') {
-    processCollectionResult(transfer, status, transactionId);
-  } else if (transfer.stage === 'refund') {
-    if (status === 'approved') {
-      transfer.status = 'refunded';
-      transfer.message = 'Argent remboursé avec succès au numéro payeur.';
-      transfer.updatedAt = nowIso();
-    } else if (status === 'rejected') {
-      transfer.status = 'completed';
-      transfer.message = 'Le remboursement au numéro payeur a échoué.';
-      transfer.updatedAt = nowIso();
-    }
-  }
-  saveTransfers();
-});
-
-// ---------------------------------------------------------------------------
-// Routes ADMIN (protégées par jeton)
-// ---------------------------------------------------------------------------
-
-function requireAdmin(req, res, next) {
-  const token = req.get('X-Admin-Token') || req.query.token;
-  if (!token || token !== config.admin.token) {
-    return res.status(401).json({ success: false, message: 'Accès réservé aux administrateurs.' });
-  }
-  next();
-}
-
-// Liste tous les paiements en attente (pour le tableau de bord ADMIN)
-app.get('/api/admin/pending', requireAdmin, (req, res) => {
-  return res.json({ success: true, transfers: listPendingTransfers() });
-});
-
-// Liste TOUT l'historique des paiements (tout statut confondu) + la somme
-// totale actuellement encaissée dans le compte SebPay de l'administrateur.
-// Alimente le tableau "Référence / Date-heure / Pays / Numéro / Nom / Montant"
-// du panneau admin.
-app.get('/api/admin/all', requireAdmin, (req, res) => {
-  return res.json({
-    success: true,
-    transfers: listAllTransfers(),
-    totalAmount: totalAdminAccountAmount(),
-  });
-});
-
-// Corrige EN MASSE tous les paiements en attente : interroge SebPay pour
-// chacun d'eux et rattrape tout webhook manqué.
-app.post('/api/admin/fix-pending', requireAdmin, async (req, res) => {
-  const pendingBefore = listPendingTransfers();
-  const results = [];
-
-  for (const transfer of pendingBefore) {
-    try {
-      const changed = await reconcileTransfer(transfer);
-      results.push({
-        reference: transfer.reference,
-        changed,
-        status: transfer.status,
-        stage: transfer.stage,
-        message: transfer.message,
-      });
-    } catch (error) {
-      console.error(`Erreur de réconciliation pour ${transfer.reference} :`, error.message, error.raw || '');
-      results.push({
-        reference: transfer.reference,
-        changed: false,
-        status: transfer.status,
-        stage: transfer.stage,
-        message: `Impossible de vérifier ce paiement auprès de SebPay pour le moment : ${error.message}`,
-        error: true,
-      });
-    }
-  }
-
-  const stillPending = results.filter((r) => r.status === 'pending');
-  return res.json({
-    success: true,
-    checked: results.length,
-    resolved: results.length - stillPending.length,
-    stillPending: stillPending.length,
-    results,
-  });
-});
-
-// Vérifie UN paiement par référence : interroge SebPay, met à jour l'état
-// local, et renvoie l'état à jour (utilisé par la recherche par référence).
-app.post('/api/admin/transfer/:reference/check', requireAdmin, async (req, res) => {
-  const transfer = findTransfer(req.params.reference);
-  if (!transfer) {
-    return res.status(404).json({ success: false, message: 'Référence introuvable.' });
-  }
-
-  try {
-    await reconcileTransfer(transfer);
-    return res.json({ success: true, transfer });
-  } catch (error) {
-    console.error('Erreur de vérification SebPay :', error.message, error.raw || '');
-    return res.status(400).json({
-      success: false,
-      message: `Impossible de vérifier ce paiement auprès de SebPay : ${error.message}`,
-      transfer,
+  if (status === 'approved') {
+    // L'argent est encaissé chez l'expéditeur : on déclenche le PAYOUT.
+    triggerPayout(transfer).catch((err) => {
+      console.error('Erreur déclenchement payout après collection :', err.message);
+      transfer.stage = 'payout_failed';
+      transfer.message = "Paiement reçu, mais l'envoi au destinataire n'a pas pu être lancé. Contactez le support.";
     });
+  } else if (status === 'rejected') {
+    transfer.stage = 'collection_failed';
+    transfer.message = "Le paiement de l'expéditeur a échoué ou a été refusé.";
+  } else {
+    transfer.stage = 'collection_pending';
+    transfer.message = 'Paiement en cours de traitement...';
   }
 });
 
-// Rembourse un paiement déjà encaissé (renvoie l'argent au numéro payeur).
-app.post('/api/admin/transfer/:reference/refund', requireAdmin, async (req, res) => {
-  const transfer = findTransfer(req.params.reference);
-  if (!transfer) {
-    return res.status(404).json({ success: false, message: 'Référence introuvable.' });
-  }
-  if (transfer.status !== 'completed') {
-    return res.status(400).json({
-      success: false,
-      message: `Ce paiement n'est pas au statut "encaissé" (statut actuel : ${transfer.status}), impossible de le rembourser.`,
-      transfer,
-    });
-  }
-  if (transfer.amount < MIN_PAYOUT_AMOUNT_XOF) {
-    return res.status(400).json({
-      success: false,
-      message: `Impossible : ${transfer.amount} XOF est sous le minimum SebPay (${MIN_PAYOUT_AMOUNT_XOF} XOF) pour tout décaissement, y compris un remboursement. Contactez le support SebPay directement avec la référence ${transfer.reference} pour un remboursement manuel.`,
-      transfer,
-    });
+// --- Webhook PAYOUT : envoi vers le destinataire ---------------------------
+app.post('/api/webhook/sebpay/payout', (req, res) => {
+  const signature = req.get('X-SebPay-Signature');
+  if (!sebpay.verifyWebhookSignature(req.rawBody, signature)) {
+    console.warn('Webhook SebPay (payout) : signature invalide, requête ignorée.');
+    return res.sendStatus(401);
   }
 
-  try {
-    const refundReference = `${transfer.reference}-REFUND-${Date.now()}`;
-    const refund = await sebpay.initiatePayout({
-      recipientName: 'Remboursement client',
-      phone: transfer.senderPhone,
-      operator: transfer.senderOperator,
-      country: transfer.senderCountry || 'BJ',
-      amount: transfer.amount,
-      externalReference: refundReference,
-    });
+  res.sendStatus(200);
 
-    transfer.stage = 'refund';
-    transfer.status = 'pending';
-    transfer.refundTransactionId = refund.transaction_id || null;
-    transfer.lastRefundReference = refundReference;
-    transfer.message = 'Remboursement demandé : l\'argent est en cours de renvoi au numéro payeur.';
-    transfer.updatedAt = nowIso();
-    transfers.set(refundReference, transfer);
-    saveTransfers();
+  const body = req.body || {};
+  console.log('Webhook SebPay (payout) reçu :', body);
 
-    return res.json({ success: true, transfer });
-  } catch (error) {
-    console.error('Erreur de remboursement SebPay :', error.message, error.raw || '');
-    return res.status(400).json({
-      success: false,
-      message: `Le remboursement au numéro payeur a échoué : ${error.message}`,
-      transfer,
-    });
+  const { external_reference: transferId, status } = body;
+  const transfer = transferId ? transfers.get(transferId) : null;
+  if (!transfer) return; // référence inconnue
+
+  if (status === 'approved') {
+    transfer.stage = 'completed';
+    transfer.message = 'Transfert terminé avec succès.';
+  } else if (status === 'rejected') {
+    transfer.stage = 'payout_failed';
+    transfer.message = "Paiement reçu chez l'expéditeur, mais l'envoi au destinataire a échoué ou a été refusé. Contactez le support pour un remboursement ou une nouvelle tentative.";
   }
 });
 
-// ---------------------------------------------------------------------------
-// Réconciliation automatique périodique
-// ---------------------------------------------------------------------------
-// Rattrape les webhooks manqués tout seul, sans clic manuel dans l'admin.
-// Tourne une première fois juste après le démarrage (une fois les paiements
-// rechargés depuis le disque), puis toutes les RECONCILE_INTERVAL_MS.
-const RECONCILE_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
-
-async function autoReconcilePending() {
-  const pending = listPendingTransfers();
-  if (pending.length === 0) return;
-  console.log(`Réconciliation auto : ${pending.length} paiement(s) en attente à vérifier...`);
-  for (const transfer of pending) {
-    try {
-      await reconcileTransfer(transfer);
-    } catch (error) {
-      console.error(`Réconciliation auto échouée pour ${transfer.reference} :`, error.message);
-    }
-  }
-}
+// Route de vérification post-déploiement : à ouvrir dans le navigateur
+// (https://votre-service.onrender.com/api/health) pour confirmer que les
+// variables d'environnement sont bien chargées sur Render. Ne renvoie
+// jamais les valeurs elles-mêmes, seulement si chaque variable est définie.
+app.get('/api/health', (req, res) => {
+  const report = config.checkEnvVars();
+  return res.status(report.ok ? 200 : 500).json(report);
+});
 
 app.listen(config.port, () => {
   console.log(`Serveur lancé sur le port ${config.port}`);
-  // Petit délai pour laisser le serveur finir de démarrer avant le premier appel SebPay.
-  setTimeout(autoReconcilePending, 5000);
-  setInterval(autoReconcilePending, RECONCILE_INTERVAL_MS);
+  config.logEnvStatus();
 });

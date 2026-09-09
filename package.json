@@ -1,7 +1,7 @@
 {
-  "name": "sebpay-transfert-bj",
+  "name": "kouame-paiement",
   "version": "1.0.0",
-  "description": "Encaissement Mobile Money multi-pays via l'API SebPay (collecte uniquement, sans decaissement)",
+  "description": "Kouamé Paiement — Réseau vers autre : transfert d'argent Mobile Money vers un autre réseau, via l'API SebPay (collections + payouts)",
   "main": "server.js",
   "engines": {
     "node": ">=18"
