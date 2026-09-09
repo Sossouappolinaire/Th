@@ -241,3 +241,20 @@ relancé.
 Les transferts sont stockés **en mémoire** : un redéploiement Render efface
 l'historique et les transferts en attente ne pourront plus être relancés
 automatiquement. Pour de la production, brancher une vraie base de données.
+
+---
+
+## Correctif du 09/09/2026 (2) — retour au slug SANS suffixe pays
+
+Le correctif précédent avait introduit des slugs suffixés par pays
+(`moov-bj`) en pensant refléter le format `GET /operators` de la doc. En
+réalité, SebPay attend le slug **sans** suffixe pour `POST /collections` et
+`POST /payouts` (`moov`, `mtn`, `orange`...) — le pays est déjà transmis à
+part via le champ `country`. Envoyer le slug suffixé faisait échouer la
+COLLECTE elle-même avec l'erreur SebPay "Operator not found or not
+configured for this country".
+
+Le catalogue de secours (`FALLBACK_OPERATORS`) est donc revenu à des slugs
+plats, et le filtrage des opérateurs inactifs (`INACTIVE_OPERATORS`) est
+maintenant scopé par pays (`"ga:airtel"` plutôt que `"airtel-ga"`), pour ne
+pas bloquer un opérateur ailleurs à cause d'un seul pays où il est inactif.

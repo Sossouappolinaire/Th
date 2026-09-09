@@ -164,7 +164,7 @@ function findMethod(countries, countryCode, operatorSlug) {
   const resolved = config.resolveOperatorSlug(code, operatorSlug, methods.map((m) => m.key));
   const method = methods.find((m) => m.key === resolved);
   if (!method) return null;
-  if (config.INACTIVE_OPERATORS.has(method.key)) return null;
+  if (config.INACTIVE_OPERATORS.has(`${code}:${method.key}`)) return null;
   return { country, method, slug: method.key };
 }
 
@@ -324,7 +324,7 @@ app.post('/api/transfer', async (req, res) => {
       amount,
       currency,
       phone: fullInternationalPhone(senderCountryCode, senderPhoneCheck.digitsOnly),
-      operator: config.apiOperatorSlug(senderMatch.slug, senderMatch.country.code),
+      operator: senderMatch.slug,
       country: senderCountryCode.toUpperCase(),
       externalReference: transfer.collectionRef,
       callbackUrl: webhookUrlFor('collection'),
@@ -443,10 +443,7 @@ async function triggerPayout(transfer, { manual = false } = {}) {
         const payoutResult = await sebpay.initiatePayout({
           recipientName: transfer.recipient.name,
           phone: fullInternationalPhone(transfer.recipient.countryCode, transfer.recipient.phone),
-          operator: config.apiOperatorSlug(
-            transfer.recipient.payoutOperator || transfer.recipient.withdrawMode,
-            transfer.recipient.countryCode,
-          ),
+          operator: transfer.recipient.payoutOperator || transfer.recipient.withdrawMode,
           country: transfer.recipient.countryCode.toUpperCase(),
           amount: transfer.recipient.amount,
           currency: transfer.recipient.currency,
@@ -571,7 +568,12 @@ app.get('/api/health', (req, res) => {
 // Sert quand le payout n'a pas pu être lancé (réseau destinataire momentanément
 // indisponible, solde wallet insuffisant au moment de la collecte...).
 // L'argent a déjà été encaissé : la relance ne re-débite pas l'expéditeur.
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+// ⚠️ À la demande explicite du propriétaire du projet, codé en dur plutôt
+// que lu uniquement depuis une variable d'environnement. Quiconque a accès
+// à ce fichier (dépôt Git, zip partagé...) peut donc appeler les routes
+// admin (relance de décaissement, liste de tous les transferts...).
+// process.env.ADMIN_TOKEN reste prioritaire s'il est défini sur Render.
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'arrow2026';
 
 function requireAdmin(req, res, next) {
   if (!ADMIN_TOKEN) return res.status(401).json({ success: false, message: "ADMIN_TOKEN n'est pas configuré sur le serveur." });

@@ -179,39 +179,43 @@ function normalizeCountryCode(raw) {
 // Le formulaire reste alors utilisable et affiche un avertissement, au lieu
 // d'un écran bloqué "Pays indisponibles pour le moment".
 const FALLBACK_OPERATORS = {
-  // ⚠️ Les slugs SebPay sont SUFFIXÉS PAR LE PAYS (ex : "moov-bj", pas
-  // "moov"). Un slug sans suffixe fait échouer le payout ("operator
-  // invalide") : c'était la cause principale des décaissements bloqués.
-  // Liste conforme à docs/SEBPAY-API.md (01/09/2026), opérateurs INACTIFS
-  // exclus (airtel-ga, emoney-sn, airtel-td, moov-td).
-  bj: [['mtn-bj', 'MTN Money'], ['moov-bj', 'Moov Money'], ['celtiis-bj', 'Celtiis Money'], ['coris-bj', 'Coris Money']],
-  ci: [['orange-ci', 'Orange Money'], ['mtn-ci', 'MTN Money'], ['moov-ci', 'Moov Money'], ['wave-ci', 'Wave Money']],
-  tg: [['moov-tg', 'Moov Money'], ['tmoney-tg', 'T-Money']],
-  bf: [['orange-bf', 'Orange Money'], ['moov-bf', 'Moov Money'], ['wligdicash-bf', 'LigdiCash']],
-  sn: [['orange-sn', 'Orange Money'], ['wave-sn', 'Wave Money'], ['free-sn', 'Free Money']],
-  ml: [['orange-ml', 'Orange Money'], ['moov-ml', 'Moov Money']],
-  ne: [['airtel-ne', 'Airtel Money'], ['moov-ne', 'Moov Money'], ['amanata-ne', 'Amanata'], ['nita-ne', 'Nita'], ['wligdicash-ne', 'LigdiCash'], ['zamani-ne', 'Zamani']],
-  gw: [['orange-gw', 'Orange Money']],
-  gn: [['orange-gn', 'Orange Money'], ['mtn-gn', 'MTN Money']],
-  cm: [['mtn-cm', 'MTN Money'], ['orange-cm', 'Orange Money']],
-  ga: [['moov-ga', 'Moov Money']],
-  cg: [['mtn-cg', 'MTN Money'], ['airtel-cg', 'Airtel Money']],
-  cd: [['orange-cd', 'Orange Money'], ['airtel-cd', 'Airtel Money'], ['mpesa-cd', 'Mpesa'], ['vodacom-cd', 'Vodacom'], ['afrimoney-cd', 'Afri Money']],
-  gm: [['afrimoney-gm', 'Afri Money']],
-  ng: [['mtn-ng', 'MTN Money'], ['airtel-ng', 'Airtel']],
-  gh: [['mtn-gh', 'MTN Money'], ['telecel-gh', 'Telecel Cash'], ['airtel-gh', 'Airtel']],
-  ke: [['mpesa-ke', 'Mpesa'], ['airtel-ke', 'Airtel']],
-  ug: [['mtn-ug', 'MTN'], ['airtel-ug', 'Airtel']],
-  tz: [['mpesa-tz', 'Mpesa'], ['airtel-tz', 'Airtel'], ['tigopesa-tz', 'Tigo Pesa'], ['halo_pesa', 'Halo Pesa'], ['ezypesa-tz', 'Ezy Pesa']],
+  // ⚠️ Slugs SANS suffixe pays (ex : "moov", pas "moov-bj"). C'est le format
+  // que SebPay accepte réellement pour POST /collections et POST /payouts
+  // (confirmé par countries.js et par un test réel) — un slug suffixé fait
+  // échouer la COLLECTE avec l'erreur SebPay "Operator not found or not
+  // configured for this country". Le pays est transmis séparément via le
+  // champ `country` de la requête, pas dans le slug.
+  bj: [['mtn', 'MTN Money'], ['moov', 'Moov Money'], ['celtiis', 'Celtiis Money'], ['coris', 'Coris Money']],
+  ci: [['orange', 'Orange Money'], ['mtn', 'MTN Money'], ['moov', 'Moov Money'], ['wave', 'Wave Money']],
+  tg: [['moov', 'Moov Money'], ['tmoney', 'T-Money']],
+  bf: [['orange', 'Orange Money'], ['moov', 'Moov Money'], ['wligdicash', 'LigdiCash']],
+  sn: [['orange', 'Orange Money'], ['wave', 'Wave Money'], ['free', 'Free Money']],
+  ml: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
+  ne: [['airtel', 'Airtel Money'], ['moov', 'Moov Money'], ['amanata', 'Amanata'], ['nita', 'Nita'], ['wligdicash', 'LigdiCash'], ['zamani', 'Zamani']],
+  gw: [['orange', 'Orange Money']],
+  gn: [['orange', 'Orange Money'], ['mtn', 'MTN Money']],
+  cm: [['mtn', 'MTN Money'], ['orange', 'Orange Money']],
+  ga: [['moov', 'Moov Money']],
+  cg: [['mtn', 'MTN Money'], ['airtel', 'Airtel Money']],
+  cd: [['orange', 'Orange Money'], ['airtel', 'Airtel Money'], ['mpesa', 'Mpesa'], ['vodacom', 'Vodacom'], ['afrimoney', 'Afri Money']],
+  gm: [['afrimoney', 'Afri Money']],
+  ng: [['mtn', 'MTN Money'], ['airtel', 'Airtel']],
+  gh: [['mtn', 'MTN Money'], ['telecel', 'Telecel Cash'], ['airtel', 'Airtel']],
+  ke: [['mpesa', 'Mpesa'], ['airtel', 'Airtel']],
+  ug: [['mtn', 'MTN'], ['airtel', 'Airtel']],
+  tz: [['mpesa', 'Mpesa'], ['airtel', 'Airtel'], ['tigopesa', 'Tigo Pesa'], ['halo_pesa', 'Halo Pesa'], ['ezypesa', 'Ezy Pesa']],
 };
 
 // Opérateurs signalés INACTIFS par SebPay : refusés en amont plutôt que de
-// laisser partir un payout voué à l'échec.
-const INACTIVE_OPERATORS = new Set(['airtel-ga', 'emoney-sn', 'airtel-td', 'moov-td']);
+// laisser partir une collecte/un payout voué à l'échec. Scopé par pays
+// ("cc:slug") car le slug seul (ex: "airtel") est maintenant partagé par
+// plusieurs pays — un Set global aurait bloqué Airtel partout à cause du
+// seul Airtel Gabon inactif.
+const INACTIVE_OPERATORS = new Set(['ga:airtel', 'sn:emoney', 'td:airtel', 'td:moov']);
 
-// Le formulaire peut encore envoyer d'anciens slugs sans suffixe pays
-// (versions précédentes du front, caches navigateur). On les recolle au bon
-// slug SebPay du pays concerné.
+// Le formulaire peut encore envoyer d'anciens slugs suffixés par pays
+// (ancienne version du front, cache navigateur). On les ramène au slug plat
+// réellement accepté par SebPay.
 function resolveOperatorSlug(countryCode, slug, availableSlugs = []) {
   const cc = String(countryCode || '').toLowerCase();
   const raw = String(slug || '').toLowerCase().trim();
@@ -219,33 +223,11 @@ function resolveOperatorSlug(countryCode, slug, availableSlugs = []) {
   const candidates = availableSlugs.length ? availableSlugs
     : (FALLBACK_OPERATORS[cc] || []).map(([k]) => k);
   if (candidates.includes(raw)) return raw;
-  const suffixed = `${raw}-${cc}`;
-  if (candidates.includes(suffixed)) return suffixed;
-  const base = raw.replace(/-[a-z]{2}$/, '');
+  const base = raw.endsWith(`-${cc}`) ? raw.slice(0, -(cc.length + 1)) : raw.replace(/-[a-z]{2}$/, '');
   const legacy = { togocom: 'tmoney', vodafone: 'telecel', airteltigo: 'airtel', ligdicash: 'wligdicash' };
   const mapped = legacy[base] || base;
-  const found = candidates.find((c) => c === mapped || c === `${mapped}-${cc}` || c.startsWith(`${mapped}-`) || c.startsWith(`${mapped}_`));
+  const found = candidates.find((c) => c === mapped || c.startsWith(`${mapped}_`));
   return found || null;
-}
-
-// GET /operators renvoie des slugs SUFFIXÉS par le pays (ex: "moov-bj"),
-// et on les garde ainsi en interne pour bien distinguer les opérateurs entre
-// pays (utile dans FALLBACK_OPERATORS, resolveOperatorSlug, INACTIVE_OPERATORS...).
-// MAIS la doc SebPay pour POST /collections et POST /payouts décrit le champ
-// `operator` SANS le suffixe pays (ex: "moov", "mtn", "orange" — le pays est
-// déjà transmis séparément via le champ `country`). Envoyer le slug suffixé
-// à ces deux endpoints fait échouer la transaction avec l'erreur SebPay
-// "Operator not found or not configured for this country".
-// On retire donc le suffixe "-<code pays>" juste avant l'appel à l'API,
-// uniquement s'il correspond bien au pays du transfert (ex: "halo_pesa"
-// n'a pas de suffixe pays et doit rester inchangé).
-function apiOperatorSlug(slug, countryCode) {
-  const raw = String(slug || '');
-  const cc = String(countryCode || '').toLowerCase();
-  if (cc && raw.toLowerCase().endsWith(`-${cc}`)) {
-    return raw.slice(0, -(cc.length + 1));
-  }
-  return raw;
 }
 
 function fallbackCountries() {
@@ -266,6 +248,5 @@ module.exports.fallbackCountries = fallbackCountries;
 module.exports.COUNTRY_META = COUNTRY_META;
 module.exports.INACTIVE_OPERATORS = INACTIVE_OPERATORS;
 module.exports.resolveOperatorSlug = resolveOperatorSlug;
-module.exports.apiOperatorSlug = apiOperatorSlug;
 module.exports.checkEnvVars = checkEnvVars;
 module.exports.logEnvStatus = logEnvStatus;
