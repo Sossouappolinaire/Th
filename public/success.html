@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transfert réussi — Kouamé Paiement</title>
+  <meta name="description" content="Confirmation de votre transfert Mobile Money." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="scene">
+
+    <main class="card" id="card">
+
+      <div class="brand">
+        <span class="brand__name">Kouamé<strong>Paiement</strong></span>
+        <span class="brand__badge" aria-hidden="true">?</span>
+      </div>
+
+      <section class="panel" id="panel-success">
+        <div class="status-card">
+          <div class="status" id="status-visual">
+            <div class="status__ring is-success" id="status-ring">
+              <div class="status__icon" id="status-icon">✓</div>
+            </div>
+            <p class="status__title" id="status-title">Vérification…</p>
+            <p class="status__message" id="status-message">Nous confirmons l'état de votre transfert.</p>
+          </div>
+
+          <dl class="summary" id="summary">
+            <div><dt>Destinataire</dt><dd id="summary-phone">—</dd></div>
+            <div><dt>Réseau</dt><dd id="summary-network">—</dd></div>
+            <div><dt>Montant</dt><dd id="summary-amount">—</dd></div>
+            <div><dt>Référence</dt><dd id="summary-token">—</dd></div>
+          </dl>
+        </div>
+
+        <a href="/" class="btn-secondary" id="new-transfer-link">Nouveau transfert</a>
+      </section>
+
+    </main>
+
+    <p class="foot-note">Kouamé Paiement — transferts sécurisés entre réseaux Mobile Money.</p>
+  </div>
+
+  <script src="success.js"></script>
+</body>
+</html>
