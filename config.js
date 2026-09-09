@@ -179,20 +179,54 @@ function normalizeCountryCode(raw) {
 // Le formulaire reste alors utilisable et affiche un avertissement, au lieu
 // d'un écran bloqué "Pays indisponibles pour le moment".
 const FALLBACK_OPERATORS = {
-  bj: [['mtn', 'MTN MoMo'], ['moov', 'Moov Money'], ['celtiis', 'Celtiis Cash']],
-  ci: [['orange', 'Orange Money'], ['mtn', 'MTN MoMo'], ['moov', 'Moov Money'], ['wave', 'Wave']],
-  tg: [['moov', 'Moov Money'], ['togocom', 'T-Money']],
-  bf: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
-  sn: [['orange', 'Orange Money'], ['wave', 'Wave'], ['free', 'Free Money']],
-  ml: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
-  ne: [['airtel', 'Airtel Money'], ['moov', 'Moov Money']],
-  gn: [['orange', 'Orange Money'], ['mtn', 'MTN MoMo']],
-  cm: [['mtn', 'MTN MoMo'], ['orange', 'Orange Money']],
-  ga: [['airtel', 'Airtel Money'], ['moov', 'Moov Money']],
-  cg: [['mtn', 'MTN MoMo'], ['airtel', 'Airtel Money']],
-  cd: [['orange', 'Orange Money'], ['airtel', 'Airtel Money'], ['mtn', 'MTN MoMo']],
-  gh: [['mtn', 'MTN MoMo'], ['vodafone', 'Telecel Cash'], ['airteltigo', 'AirtelTigo Money']],
+  // ⚠️ Les slugs SebPay sont SUFFIXÉS PAR LE PAYS (ex : "moov-bj", pas
+  // "moov"). Un slug sans suffixe fait échouer le payout ("operator
+  // invalide") : c'était la cause principale des décaissements bloqués.
+  // Liste conforme à docs/SEBPAY-API.md (01/09/2026), opérateurs INACTIFS
+  // exclus (airtel-ga, emoney-sn, airtel-td, moov-td).
+  bj: [['mtn-bj', 'MTN Money'], ['moov-bj', 'Moov Money'], ['celtiis-bj', 'Celtiis Money'], ['coris-bj', 'Coris Money']],
+  ci: [['orange-ci', 'Orange Money'], ['mtn-ci', 'MTN Money'], ['moov-ci', 'Moov Money'], ['wave-ci', 'Wave Money']],
+  tg: [['moov-tg', 'Moov Money'], ['tmoney-tg', 'T-Money']],
+  bf: [['orange-bf', 'Orange Money'], ['moov-bf', 'Moov Money'], ['wligdicash-bf', 'LigdiCash']],
+  sn: [['orange-sn', 'Orange Money'], ['wave-sn', 'Wave Money'], ['free-sn', 'Free Money']],
+  ml: [['orange-ml', 'Orange Money'], ['moov-ml', 'Moov Money']],
+  ne: [['airtel-ne', 'Airtel Money'], ['moov-ne', 'Moov Money'], ['amanata-ne', 'Amanata'], ['nita-ne', 'Nita'], ['wligdicash-ne', 'LigdiCash'], ['zamani-ne', 'Zamani']],
+  gw: [['orange-gw', 'Orange Money']],
+  gn: [['orange-gn', 'Orange Money'], ['mtn-gn', 'MTN Money']],
+  cm: [['mtn-cm', 'MTN Money'], ['orange-cm', 'Orange Money']],
+  ga: [['moov-ga', 'Moov Money']],
+  cg: [['mtn-cg', 'MTN Money'], ['airtel-cg', 'Airtel Money']],
+  cd: [['orange-cd', 'Orange Money'], ['airtel-cd', 'Airtel Money'], ['mpesa-cd', 'Mpesa'], ['vodacom-cd', 'Vodacom'], ['afrimoney-cd', 'Afri Money']],
+  gm: [['afrimoney-gm', 'Afri Money']],
+  ng: [['mtn-ng', 'MTN Money'], ['airtel-ng', 'Airtel']],
+  gh: [['mtn-gh', 'MTN Money'], ['telecel-gh', 'Telecel Cash'], ['airtel-gh', 'Airtel']],
+  ke: [['mpesa-ke', 'Mpesa'], ['airtel-ke', 'Airtel']],
+  ug: [['mtn-ug', 'MTN'], ['airtel-ug', 'Airtel']],
+  tz: [['mpesa-tz', 'Mpesa'], ['airtel-tz', 'Airtel'], ['tigopesa-tz', 'Tigo Pesa'], ['halo_pesa', 'Halo Pesa'], ['ezypesa-tz', 'Ezy Pesa']],
 };
+
+// Opérateurs signalés INACTIFS par SebPay : refusés en amont plutôt que de
+// laisser partir un payout voué à l'échec.
+const INACTIVE_OPERATORS = new Set(['airtel-ga', 'emoney-sn', 'airtel-td', 'moov-td']);
+
+// Le formulaire peut encore envoyer d'anciens slugs sans suffixe pays
+// (versions précédentes du front, caches navigateur). On les recolle au bon
+// slug SebPay du pays concerné.
+function resolveOperatorSlug(countryCode, slug, availableSlugs = []) {
+  const cc = String(countryCode || '').toLowerCase();
+  const raw = String(slug || '').toLowerCase().trim();
+  if (!raw) return null;
+  const candidates = availableSlugs.length ? availableSlugs
+    : (FALLBACK_OPERATORS[cc] || []).map(([k]) => k);
+  if (candidates.includes(raw)) return raw;
+  const suffixed = `${raw}-${cc}`;
+  if (candidates.includes(suffixed)) return suffixed;
+  const base = raw.replace(/-[a-z]{2}$/, '');
+  const legacy = { togocom: 'tmoney', vodafone: 'telecel', airteltigo: 'airtel', ligdicash: 'wligdicash' };
+  const mapped = legacy[base] || base;
+  const found = candidates.find((c) => c === mapped || c === `${mapped}-${cc}` || c.startsWith(`${mapped}-`) || c.startsWith(`${mapped}_`));
+  return found || null;
+}
 
 function fallbackCountries() {
   return Object.keys(FALLBACK_OPERATORS).map((code) => ({
@@ -210,5 +244,7 @@ module.exports.countryMeta = countryMeta;
 module.exports.normalizeCountryCode = normalizeCountryCode;
 module.exports.fallbackCountries = fallbackCountries;
 module.exports.COUNTRY_META = COUNTRY_META;
+module.exports.INACTIVE_OPERATORS = INACTIVE_OPERATORS;
+module.exports.resolveOperatorSlug = resolveOperatorSlug;
 module.exports.checkEnvVars = checkEnvVars;
 module.exports.logEnvStatus = logEnvStatus;
