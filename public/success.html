@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Transfert réussi — Kouamé Paiement</title>
-  <meta name="description" content="Confirmation de votre transfert Mobile Money." />
+  <title>Reçu de transfert — Kouamé Paiement</title>
+  <meta name="description" content="Reçu de votre transfert Mobile Money : montant, réseau, destinataire et référence." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -18,28 +18,60 @@
 
       <div class="brand">
         <span class="brand__name">Kouamé<strong>Paiement</strong></span>
-        <span class="brand__badge" aria-hidden="true">?</span>
+        <span class="brand__badge" aria-hidden="true">✓</span>
       </div>
 
-      <section class="panel" id="panel-success">
-        <div class="status-card">
-          <div class="status" id="status-visual">
-            <div class="status__ring is-success" id="status-ring">
-              <div class="status__icon" id="status-icon">✓</div>
-            </div>
-            <p class="status__title" id="status-title">Vérification…</p>
-            <p class="status__message" id="status-message">Nous confirmons l'état de votre transfert.</p>
-          </div>
+      <section class="panel" id="panel-receipt">
 
-          <dl class="summary" id="summary">
-            <div><dt>Destinataire</dt><dd id="summary-phone">—</dd></div>
-            <div><dt>Réseau</dt><dd id="summary-network">—</dd></div>
-            <div><dt>Montant</dt><dd id="summary-amount">—</dd></div>
-            <div><dt>Référence</dt><dd id="summary-token">—</dd></div>
-          </dl>
+        <!-- Imprimante + reçu qui sort du rouleau -->
+        <div class="printer" aria-hidden="true">
+          <div class="printer__body">
+            <div class="printer__screen" id="printer-screen">Impression…</div>
+          </div>
+          <div class="printer__slot"></div>
         </div>
 
-        <a href="/" class="btn-secondary" id="new-transfer-link">Nouveau transfert</a>
+        <div class="receipt-wrap">
+          <article class="receipt" id="receipt">
+            <header class="receipt__head">
+              <div class="receipt__shop">KOUAMÉ PAIEMENT</div>
+              <div class="receipt__sub">Transfert Mobile Money<br />réseau à réseau</div>
+            </header>
+
+            <hr class="receipt__rule" />
+
+            <div class="receipt__line"><span>Reçu n°</span><span id="r-ref">—</span></div>
+            <div class="receipt__line"><span>Date</span><span id="r-date">—</span></div>
+
+            <hr class="receipt__rule" />
+
+            <div class="receipt__line"><span>Expéditeur</span><span id="r-sender">—</span></div>
+            <div class="receipt__line"><span>Numéro</span><span id="r-sender-phone">—</span></div>
+            <div class="receipt__line"><span>Réseau</span><span id="r-sender-network">—</span></div>
+
+            <hr class="receipt__rule" />
+
+            <div class="receipt__line"><span>Destinataire</span><span id="r-recipient">—</span></div>
+            <div class="receipt__line"><span>Numéro</span><span id="r-recipient-phone">—</span></div>
+            <div class="receipt__line"><span>Réseau</span><span id="r-recipient-network">—</span></div>
+            <div class="receipt__line"><span>Pays</span><span id="r-country">—</span></div>
+
+            <hr class="receipt__rule" />
+
+            <div class="receipt__line"><span>Montant envoyé</span><span id="r-amount">—</span></div>
+            <div class="receipt__line"><span>Frais</span><span id="r-fees">0</span></div>
+            <div class="receipt__line receipt__total"><span>Total reçu</span><span id="r-total">—</span></div>
+
+            <p class="receipt__stamp" id="r-stamp">PAIEMENT CONFIRMÉ</p>
+            <p class="receipt__thanks">Merci d'avoir utilisé Kouamé Paiement !</p>
+          </article>
+        </div>
+
+        <div class="receipt-actions">
+          <button type="button" class="btn-secondary" id="print-btn">🖨️ Imprimer</button>
+          <a href="/" class="btn-primary" id="new-transfer-link">Nouveau transfert</a>
+        </div>
+
       </section>
 
     </main>

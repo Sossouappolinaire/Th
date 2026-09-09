@@ -237,6 +237,10 @@ async function loadMethods() {
     }
 
     countriesData = data.data;
+    if (data.degraded) {
+      const notice = document.getElementById('degraded-notice');
+      if (notice) notice.classList.remove('is-hidden');
+    }
     const options = '<option value="">Sélectionnez un pays</option>' +
       countriesData.map((c) => `<option value="${c.code}">${c.country}</option>`).join('');
 
@@ -248,7 +252,9 @@ async function loadMethods() {
     senderCountrySelect.innerHTML = '<option value="">Pays indisponibles pour le moment</option>';
     countrySelect.innerHTML = '<option value="">Pays indisponibles pour le moment</option>';
     formError.textContent = 'Impossible de charger la liste des pays. Réessayez dans un instant.';
+    return false;
   }
+  return true;
 }
 
 function renderNetworkChips(grid, country, onSelect) {
@@ -515,5 +521,83 @@ function resumeTransferFromUrl() {
 }
 
 showStep(1);
-resumeTransferFromUrl();
-loadMethods();
+const resumedFromUrl = resumeTransferFromUrl();
+const methodsReady = loadMethods();
+
+// --- Écran d'accueil : barres de chargement puis ouverture du site -------
+// Les deux premières barres avancent d'elles-mêmes ; la troisième attend la
+// vraie réponse de /api/methods, pour que le site ne s'ouvre qu'une fois les
+// pays et réseaux réellement chargés.
+
+function runBoot(readyPromise) {
+  const boot = document.getElementById('boot');
+  const scene = document.getElementById('scene');
+  if (!boot || !scene) return;
+
+  const list = document.getElementById('boot-list');
+  const pctEl = document.getElementById('boot-pct');
+  const totalFill = document.getElementById('boot-total-fill');
+  const hint = document.getElementById('boot-hint');
+
+  const tasks = [
+    { label: 'Connexion sécurisée', speed: 1.9, cap: 100 },
+    { label: 'Réseaux Mobile Money', speed: 1.3, cap: 100 },
+    { label: 'Pays disponibles', speed: 1.1, cap: 92 },
+  ];
+
+  tasks.forEach((task, i) => {
+    const li = document.createElement('li');
+    li.className = 'boot__item';
+    li.innerHTML = `
+      <span class="boot__label">${task.label}</span>
+      <span class="boot__bar"><span class="boot__bar-fill" data-fill="${i}"></span></span>
+      <span class="boot__value" data-value="${i}">0%</span>
+    `;
+    list.appendChild(li);
+    task.value = 0;
+    task.fillEl = li.querySelector('.boot__bar-fill');
+    task.valueEl = li.querySelector('.boot__value');
+    task.itemEl = li;
+  });
+
+  let ready = false;
+  readyPromise
+    .then((ok) => {
+      ready = true;
+      if (ok === false) hint.textContent = 'Réseaux chargés en mode secours…';
+    })
+    .catch(() => { ready = true; });
+
+  let done = false;
+  const tick = () => {
+    tasks.forEach((task, i) => {
+      const previousDone = i === 0 || tasks[i - 1].value >= 100;
+      if (!previousDone) return;
+      const cap = i === 2 ? (ready ? 100 : task.cap) : task.cap;
+      if (task.value < cap) task.value = Math.min(cap, task.value + task.speed);
+      task.fillEl.style.width = `${task.value}%`;
+      task.valueEl.textContent = `${Math.round(task.value)}%`;
+      task.itemEl.classList.toggle('is-done', task.value >= 100);
+    });
+
+    const total = tasks.reduce((sum, t) => sum + t.value, 0) / tasks.length;
+    totalFill.style.width = `${total}%`;
+    pctEl.textContent = Math.round(total);
+
+    if (total >= 100) {
+      if (done) return;
+      done = true;
+      hint.textContent = 'Prêt — ouverture…';
+      setTimeout(() => {
+        boot.classList.add('is-gone');
+        scene.classList.remove('is-booting');
+        setTimeout(() => boot.remove(), 700);
+      }, 320);
+      return;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+runBoot(resumedFromUrl ? Promise.resolve(true) : methodsReady);

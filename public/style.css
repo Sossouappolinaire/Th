@@ -654,3 +654,288 @@ button {
   .card { padding: 22px 16px 20px; }
   .step-title { font-size: 1.14rem; }
 }
+
+/* ---------------------------------------------------------------------
+   Écran d'accueil : barres de chargement puis ouverture du site
+--------------------------------------------------------------------- */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  background: radial-gradient(120% 90% at 15% 0%, #372ea8 0%, #1c1b30 55%, #12111f 100%);
+  color: #fff;
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+
+.boot.is-gone { opacity: 0; transform: scale(1.04); pointer-events: none; }
+
+.boot__glow {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(244, 224, 77, 0.35), transparent 65%);
+  filter: blur(10px);
+  top: -90px;
+  right: -80px;
+  animation: boot-float 6s ease-in-out infinite;
+}
+
+@keyframes boot-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(26px); }
+}
+
+.boot__inner {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  text-align: left;
+}
+
+.boot__logo {
+  font-family: 'Baloo 2', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+}
+.boot__logo strong { color: var(--yellow); font-weight: 800; }
+
+.boot__title {
+  font-family: 'Baloo 2', sans-serif;
+  font-size: 1.9rem;
+  line-height: 1.15;
+  margin: 14px 0 8px;
+  font-weight: 800;
+}
+
+.boot__tag {
+  margin: 0 0 26px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.boot__list { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 14px; }
+
+.boot__item {
+  display: grid;
+  grid-template-columns: 1fr 46px;
+  grid-template-areas: 'label value' 'bar bar';
+  align-items: center;
+  gap: 6px 10px;
+  opacity: 0.55;
+  transition: opacity 0.3s ease;
+}
+.boot__item.is-done { opacity: 1; }
+
+.boot__label { grid-area: label; font-size: 0.82rem; font-weight: 500; }
+.boot__value { grid-area: value; font-size: 0.76rem; text-align: right; color: var(--yellow); font-weight: 700; }
+
+.boot__bar {
+  grid-area: bar;
+  display: block;
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.boot__bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--teal), var(--yellow));
+}
+
+.boot__meter {
+  height: 10px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.boot__meter-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--pink), var(--yellow));
+  box-shadow: 0 0 18px rgba(244, 224, 77, 0.5);
+}
+
+.boot__pct {
+  margin: 10px 0 2px;
+  font-family: 'Baloo 2', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.boot__hint { margin: 0; font-size: 0.78rem; color: rgba(255, 255, 255, 0.6); }
+
+.scene.is-booting { opacity: 0; }
+.scene { animation: scene-in 0.6s ease both; }
+
+@keyframes scene-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.notice {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: #fff8e1;
+  color: #7a5c00;
+  font-size: 0.78rem;
+}
+
+/* ---------------------------------------------------------------------
+   Reçu imprimé (animation d'impression thermique)
+--------------------------------------------------------------------- */
+
+.printer {
+  position: relative;
+  margin: 6px 0 18px;
+  padding: 26px 16px 0;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #23223a, #15142a);
+  overflow: hidden;
+}
+
+.printer__body {
+  position: relative;
+  z-index: 3;
+  height: 74px;
+  border-radius: 16px 16px 8px 8px;
+  background: linear-gradient(180deg, #e9e5da, #cfc9bb);
+  box-shadow: inset 0 -6px 12px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.printer__screen {
+  width: 62%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #17171d;
+  color: var(--teal);
+  font-family: ui-monospace, 'Courier New', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.printer__slot {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 88px;
+  height: 8px;
+  border-radius: 4px;
+  background: #0d0d16;
+  z-index: 4;
+}
+
+.receipt-wrap {
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  padding: 0 4px 20px;
+}
+
+.receipt {
+  position: relative;
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+  padding: 20px 18px 24px;
+  background: #f7f6f2;
+  color: #21212b;
+  font-family: ui-monospace, 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  box-shadow: 0 16px 30px -18px rgba(0, 0, 0, 0.6);
+  transform: translateY(-100%);
+  animation: print-out 2.4s cubic-bezier(0.22, 0.9, 0.2, 1) forwards;
+}
+
+@keyframes print-out {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.receipt::before,
+.receipt::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background-image: linear-gradient(135deg, #f7f6f2 50%, transparent 50%),
+                    linear-gradient(-135deg, #f7f6f2 50%, transparent 50%);
+  background-size: 10px 10px;
+  background-repeat: repeat-x;
+}
+.receipt::before { top: -8px; transform: rotate(180deg); }
+.receipt::after { bottom: -8px; }
+
+.receipt__head { text-align: center; margin-bottom: 12px; }
+.receipt__shop {
+  font-family: 'Baloo 2', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.receipt__sub { font-size: 0.7rem; color: #6b6b78; }
+
+.receipt__rule {
+  border: none;
+  border-top: 1px dashed #b9b7ad;
+  margin: 10px 0;
+}
+
+.receipt__line {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.receipt__line span:first-child { color: #6b6b78; }
+.receipt__line span:last-child { text-align: right; font-weight: 600; word-break: break-word; }
+
+.receipt__total {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.receipt__stamp {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--success);
+  border: 2px dashed var(--success);
+  border-radius: 8px;
+  padding: 6px 4px;
+  transform: rotate(-2deg);
+}
+
+.receipt__thanks { text-align: center; margin-top: 12px; font-size: 0.75rem; }
+
+.receipt-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+@media print {
+  body { background: #fff; }
+  .brand, .printer, .receipt-actions, .foot-note, .receipt__loader { display: none !important; }
+  .card { box-shadow: none; padding: 0; }
+  .receipt { transform: none; animation: none; box-shadow: none; max-width: 100%; }
+}

@@ -12,7 +12,25 @@
 </head>
 <body>
 
-  <div class="scene">
+  <!-- ===================== ÉCRAN D'ACCUEIL / CHARGEMENT ===================== -->
+  <div class="boot" id="boot">
+    <div class="boot__glow" aria-hidden="true"></div>
+    <div class="boot__inner">
+      <span class="boot__logo">Kouamé<strong>Paiement</strong></span>
+      <h1 class="boot__title">Envoyez de l'argent<br />d'un réseau à un autre</h1>
+      <p class="boot__tag">Mobile Money — Bénin, Côte d'Ivoire, Togo, Sénégal, Cameroun…</p>
+
+      <ul class="boot__list" id="boot-list"></ul>
+
+      <div class="boot__meter">
+        <div class="boot__meter-fill" id="boot-total-fill"></div>
+      </div>
+      <p class="boot__pct"><span id="boot-pct">0</span>%</p>
+      <p class="boot__hint" id="boot-hint">Préparation de votre espace sécurisé…</p>
+    </div>
+  </div>
+
+  <div class="scene is-booting" id="scene">
 
     <main class="card" id="card">
 
@@ -201,6 +219,9 @@
             </div>
           </fieldset>
 
+          <p class="notice is-hidden" id="degraded-notice">
+            Liste des réseaux affichée en mode secours (le service de paiement est momentanément injoignable).
+          </p>
           <p class="error" id="form-error" role="alert"></p>
 
           <div class="wizard-nav">
