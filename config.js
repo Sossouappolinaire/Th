@@ -228,6 +228,26 @@ function resolveOperatorSlug(countryCode, slug, availableSlugs = []) {
   return found || null;
 }
 
+// GET /operators renvoie des slugs SUFFIXÉS par le pays (ex: "moov-bj"),
+// et on les garde ainsi en interne pour bien distinguer les opérateurs entre
+// pays (utile dans FALLBACK_OPERATORS, resolveOperatorSlug, INACTIVE_OPERATORS...).
+// MAIS la doc SebPay pour POST /collections et POST /payouts décrit le champ
+// `operator` SANS le suffixe pays (ex: "moov", "mtn", "orange" — le pays est
+// déjà transmis séparément via le champ `country`). Envoyer le slug suffixé
+// à ces deux endpoints fait échouer la transaction avec l'erreur SebPay
+// "Operator not found or not configured for this country".
+// On retire donc le suffixe "-<code pays>" juste avant l'appel à l'API,
+// uniquement s'il correspond bien au pays du transfert (ex: "halo_pesa"
+// n'a pas de suffixe pays et doit rester inchangé).
+function apiOperatorSlug(slug, countryCode) {
+  const raw = String(slug || '');
+  const cc = String(countryCode || '').toLowerCase();
+  if (cc && raw.toLowerCase().endsWith(`-${cc}`)) {
+    return raw.slice(0, -(cc.length + 1));
+  }
+  return raw;
+}
+
 function fallbackCountries() {
   return Object.keys(FALLBACK_OPERATORS).map((code) => ({
     code,
@@ -246,5 +266,6 @@ module.exports.fallbackCountries = fallbackCountries;
 module.exports.COUNTRY_META = COUNTRY_META;
 module.exports.INACTIVE_OPERATORS = INACTIVE_OPERATORS;
 module.exports.resolveOperatorSlug = resolveOperatorSlug;
+module.exports.apiOperatorSlug = apiOperatorSlug;
 module.exports.checkEnvVars = checkEnvVars;
 module.exports.logEnvStatus = logEnvStatus;

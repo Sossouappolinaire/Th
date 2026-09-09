@@ -324,7 +324,7 @@ app.post('/api/transfer', async (req, res) => {
       amount,
       currency,
       phone: fullInternationalPhone(senderCountryCode, senderPhoneCheck.digitsOnly),
-      operator: senderMatch.slug,
+      operator: config.apiOperatorSlug(senderMatch.slug, senderMatch.country.code),
       country: senderCountryCode.toUpperCase(),
       externalReference: transfer.collectionRef,
       callbackUrl: webhookUrlFor('collection'),
@@ -443,7 +443,10 @@ async function triggerPayout(transfer, { manual = false } = {}) {
         const payoutResult = await sebpay.initiatePayout({
           recipientName: transfer.recipient.name,
           phone: fullInternationalPhone(transfer.recipient.countryCode, transfer.recipient.phone),
-          operator: transfer.recipient.payoutOperator || transfer.recipient.withdrawMode,
+          operator: config.apiOperatorSlug(
+            transfer.recipient.payoutOperator || transfer.recipient.withdrawMode,
+            transfer.recipient.countryCode,
+          ),
           country: transfer.recipient.countryCode.toUpperCase(),
           amount: transfer.recipient.amount,
           currency: transfer.recipient.currency,
