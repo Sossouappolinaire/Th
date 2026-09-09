@@ -57,28 +57,7 @@ async function callSebPay(method, path, { body } = {}) {
 async function listOperators(countryCode) {
   const query = countryCode ? `?country=${encodeURIComponent(countryCode)}` : '';
   const data = await callSebPay('GET', `/operators${query}`);
-  const list = Array.isArray(data) ? data : (data.operators || []);
-  // On écarte les opérateurs signalés inactifs : les proposer garantissait un
-  // payout rejeté par l'agrégateur (ex : Airtel Gabon, Moov Tchad).
-  return list.filter((op) => {
-    const status = String(op.status || op.state || '').toLowerCase();
-    if (status && ['inactive', 'disabled', 'suspended'].includes(status)) return false;
-    if (op.is_active === false || op.active === false) return false;
-    return true;
-  });
-}
-
-/**
- * Normalise un statut SebPay. Selon l'endpoint, SebPay renvoie
- * `approved`/`rejected`/`pending` (webhooks) OU `SUCCESS`/`FAILED`/`PENDING`
- * (réponses HTTP). Sans cette normalisation, un payout réussi restait
- * éternellement "en cours" côté site.
- */
-function normalizeStatus(raw) {
-  const value = String(raw || '').toLowerCase().trim();
-  if (['approved', 'success', 'successful', 'completed', 'complete', 'paid', 'done'].includes(value)) return 'approved';
-  if (['rejected', 'failed', 'failure', 'declined', 'canceled', 'cancelled', 'error', 'refunded'].includes(value)) return 'rejected';
-  return 'pending';
+  return Array.isArray(data) ? data : (data.operators || []);
 }
 
 // ------------------------------------------------------------------------
@@ -176,7 +155,6 @@ function verifyWebhookSignature(rawBody, signatureHeader) {
 
 module.exports = {
   listOperators,
-  normalizeStatus,
   initiateCollection,
   getCollection,
   initiatePayout,
