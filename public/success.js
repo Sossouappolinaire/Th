@@ -3,8 +3,10 @@
 // Cette page n'affiche JAMAIS "transfert réussi" sur la seule foi de l'URL :
 // elle revérifie toujours l'état réel du transfert auprès de notre backend
 // (/api/transfer/:id), qui lui-même ne passe à "completed" qu'après avoir
-// reçu la confirmation du webhook payout de SebPay (signature HMAC
-// vérifiée). Impossible donc d'afficher un faux reçu en tapant l'URL à la main.
+// revérifié le statut du payout directement auprès de FeexPay (appel
+// authentifié par clé API — FeexPay ne signant pas ses webhooks, on ne leur
+// fait jamais confiance seuls). Impossible donc d'afficher un faux reçu en
+// tapant l'URL à la main.
 
 const screenEl = document.getElementById('printer-screen');
 const receiptEl = document.getElementById('receipt');

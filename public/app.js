@@ -3,8 +3,8 @@
 // (3) réseau + numéro destinataire, (4) montant, (5) vérification & envoi.
 // Charge dynamiquement la liste des pays/réseaux depuis /api/methods, gère
 // la navigation entre étapes, puis suit (polling) l'état du transfert
-// jusqu'à confirmation. N'appelle jamais SebPay directement : passe
-// toujours par notre backend, qui seul détient les clés API.
+// jusqu'à confirmation. N'appelle jamais FeexPay directement : passe
+// toujours par notre backend, qui seul détient la clé API.
 
 const senderCountrySelect = document.getElementById('sender-country');
 const senderDialCode = document.getElementById('sender-dial-code');
@@ -463,8 +463,9 @@ form.addEventListener('submit', async (event) => {
     summaryToken.textContent = data.transferId;
     renderPending('collection_pending', data.message);
 
-    // Certains opérateurs (ex : Wave) renvoient un lien de paiement à ouvrir
-    // dans un NOUVEL ONGLET (conformément à la doc SebPay) — l'expéditeur y
+    // Certains opérateurs (ex : Orange, Wave, Moov CI) renvoient un lien de
+    // paiement à ouvrir dans un NOUVEL ONGLET (conformément à la doc
+    // FeexPay) — l'expéditeur y
     // valide, pendant que cet onglet-ci continue de suivre l'état en direct.
     // Pour les autres opérateurs, l'expéditeur reçoit directement une
     // demande USSD/notification sur son téléphone : rien à ouvrir.
