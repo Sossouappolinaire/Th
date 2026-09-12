@@ -1,45 +1,54 @@
 // server.js
 // Point d'entrée du serveur. Sert le front-end statique et expose l'API de
-// transfert réseau -> réseau, qui combine les DEUX API SebPay :
+// transfert réseau -> réseau, qui combine les DEUX API FeexPay :
 //
-//   1) COLLECTION : on encaisse chez l'EXPÉDITEUR (demande envoyée
-//               directement à son numéro Mobile Money — USSD/notification —
-//               ou lien à ouvrir dans un nouvel onglet pour certains
-//               opérateurs comme Wave).
-//   2) Webhook collection (status: approved) : dès que l'encaissement est
+//   1) PAYIN : on encaisse chez l'EXPÉDITEUR (demande envoyée directement
+//               à son numéro Mobile Money — USSD/notification — pour la
+//               plupart des réseaux, ou lien de paiement `payment_url` à
+//               ouvrir dans un nouvel onglet pour les réseaux à
+//               redirection : Orange, Wave, Moov Côte d'Ivoire...).
+//   2) Webhook / revérification (status: SUCCESSFUL) : dès que le payin est
 //               confirmé, on déclenche AUTOMATIQUEMENT le PAYOUT vers le
 //               DESTINATAIRE.
-//   3) Webhook payout (status: approved / rejected) : confirme (ou non)
-//               l'arrivée de l'argent chez le destinataire.
+//   3) Webhook / revérification (status: SUCCESSFUL / FAILED) : confirme
+//               (ou non) l'arrivée de l'argent chez le destinataire.
 //
 // Flux complet d'un transfert :
-//   1) GET  /api/methods                 -> liste (mise en cache) des pays et
-//                                            opérateurs Mobile Money disponibles,
-//                                            interrogée en direct auprès de
-//                                            SebPay (jamais codée en dur).
-//   2) POST /api/transfer                -> crée le transfert, lance la
-//                                            COLLECTION chez l'expéditeur.
+//   1) GET  /api/methods                 -> liste (catalogue statique) des
+//                                            pays et réseaux Mobile Money
+//                                            pris en charge par FeexPay
+//                                            (voir feexpayCatalog.js —
+//                                            FeexPay n'a pas de route pour
+//                                            lister ses réseaux en direct).
+//   2) POST /api/transfer                -> crée le transfert, lance le
+//                                            PAYIN chez l'expéditeur.
 //                                            Renvoie soit un lien de paiement
 //                                            à ouvrir dans un nouvel onglet
-//                                            (Wave), soit rien (l'expéditeur
-//                                            valide directement sur son
-//                                            téléphone via USSD/notification).
-//   3) POST /api/webhook/sebpay/collection -> SebPay confirme l'encaissement
-//                                            -> on lance alors le PAYOUT.
-//   4) POST /api/webhook/sebpay/payout     -> SebPay confirme (ou non)
-//                                            l'envoi au destinataire.
-//   5) GET  /api/transfer/:id            -> le front-end interroge l'état
-//                                            (polling) ; en secours, si l'état
-//                                            reste "pending" trop longtemps,
-//                                            on revérifie directement auprès
-//                                            de SebPay (au cas où un webhook
-//                                            aurait été manqué).
+//                                            (réseaux à redirection), soit
+//                                            rien (l'expéditeur valide
+//                                            directement sur son téléphone
+//                                            via USSD/notification).
+//   3) POST /api/webhook/feexpay          -> FeexPay notifie un évènement de
+//                                            transaction (payin OU payout —
+//                                            une seule URL de webhook côté
+//                                            FeexPay). On ne fait JAMAIS
+//                                            confiance au contenu du webhook
+//                                            lui-même (FeexPay ne signe pas
+//                                            ses webhooks) : il ne sert que
+//                                            de déclencheur pour aller
+//                                            revérifier le statut réel via
+//                                            un appel authentifié à FeexPay.
+//   4) GET  /api/transfer/:id            -> le front-end interroge l'état
+//                                            (polling) ; on revérifie
+//                                            toujours directement auprès de
+//                                            FeexPay (au cas où un webhook
+//                                            aurait été manqué, ou en
+//                                            l'absence de configuration de
+//                                            webhook).
 //
-// ⚠️ Point d'attention (à surveiller en production) : si la COLLECTION
-// réussit mais que le PAYOUT échoue ensuite (réseau destinataire
-// indisponible, solde marchand insuffisant, etc.), l'argent a déjà été
-// prélevé chez l'expéditeur. Selon la doc SebPay, un payout en échec
-// rembourse automatiquement VOTRE WALLET SebPay — pas directement
+// ⚠️ Point d'attention (à surveiller en production) : si le PAYIN réussit
+// mais que le PAYOUT échoue ensuite (réseau destinataire indisponible,
+// solde marchand insuffisant, etc.), l'argent a déjà été prélevé chez
 // l'expéditeur. Le statut du transfert passe alors à "payout_failed" : à
 // vous de mettre en place un remboursement de l'expéditeur, une nouvelle
 // tentative de payout, ou un suivi manuel.
@@ -54,14 +63,12 @@ const crypto = require('crypto');
 const express = require('express');
 const path = require('path');
 const config = require('./config');
-const sebpay = require('./sebpayService');
+const feexpay = require('./feexpayService');
+const catalog = require('./feexpayCatalog');
 const { getPhoneRule } = require('./phoneRules');
 
 const app = express();
-// On conserve le corps brut de la requête (req.rawBody) pour pouvoir
-// vérifier la signature HMAC des webhooks SebPay, qui est calculée sur les
-// octets exacts envoyés — pas sur une re-sérialisation JSON.
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Stockage en mémoire des transferts (suffisant pour une démo ; utilisez une
@@ -69,70 +76,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 // redémarrage/redéploiement).
 const transfers = new Map(); // transferId -> transfer
 
-// --- Cache de la liste des pays / opérateurs (interrogée en direct) -----
-let methodsCache = { data: [], fetchedAt: 0 };
-const METHODS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — la doc SebPay recommande de ne pas figer cette liste trop longtemps (otp_required peut évoluer)
-
-function groupOperatorsByCountry(operators) {
-  const byCountry = new Map(); // code pays (minuscule) -> { code, country, currency, paymentMethods: [] }
-
-  operators.forEach((op) => {
-    // Le champ "country" renvoyé par SebPay peut être un objet ({code, name})
-    // ou directement un code selon les opérateurs ; on gère les deux cas.
-    const rawCode = (op.country && (op.country.code || op.country.id)) || op.country_code || op.country;
-    if (!rawCode) return;
-    const code = config.normalizeCountryCode(rawCode);
-    if (!code) return; // pays inconnu de notre référentiel (devise non fiable) -> ignoré par sécurité
-    const meta = config.countryMeta(code);
-    if (!meta) return;
-
-    if (!byCountry.has(code)) {
-      byCountry.set(code, {
-        code,
-        country: meta.name,
-        currency: meta.currency,
-        paymentMethods: [],
-      });
-    }
-
-    const slug = op.slug || op.code || op.key;
-    if (!slug) return;
-    if (byCountry.get(code).paymentMethods.some((m) => m.key === slug)) return;
-    byCountry.get(code).paymentMethods.push({
-      key: slug,
+// --- Catalogue des pays / opérateurs -------------------------------------
+// FeexPay n'exposant aucune route pour lister ses réseaux en direct
+// (contrairement à l'ancien fournisseur), ce catalogue est STATIQUE — voir
+// feexpayCatalog.js. Pas de cache ni de catalogue de secours nécessaires ici.
+function getMethods() {
+  return catalog.publicCountries().map((country) => ({
+    code: country.code,
+    country: country.name,
+    currency: country.currency,
+    paymentMethods: country.operators.map((op) => ({
+      key: op.slug,
       name: op.name,
-      otpRequired: Boolean(op.otp_required),
-      ussdCode: op.ussd_code || null,
-    });
-  });
-
-  return Array.from(byCountry.values());
-}
-
-async function getMethods({ forceRefresh = false } = {}) {
-  const isStale = Date.now() - methodsCache.fetchedAt > METHODS_CACHE_TTL_MS;
-  if (forceRefresh || isStale || methodsCache.data.length === 0) {
-    try {
-      const operators = await sebpay.listOperators();
-      const grouped = groupOperatorsByCountry(operators);
-      if (grouped.length > 0) {
-        methodsCache = { data: grouped, fetchedAt: Date.now(), source: 'sebpay' };
-      } else {
-        console.warn('SebPay a répondu sans opérateur exploitable : catalogue de secours utilisé.');
-        methodsCache = { data: config.fallbackCountries(), fetchedAt: Date.now(), source: 'fallback' };
-      }
-    } catch (error) {
-      console.error('GET /operators SebPay a échoué :', error.message, '- catalogue de secours utilisé.');
-      // On ne laisse JAMAIS le formulaire sans pays : catalogue de secours,
-      // et cache court pour retenter rapidement l'appel direct.
-      methodsCache = {
-        data: config.fallbackCountries(),
-        fetchedAt: Date.now() - (METHODS_CACHE_TTL_MS - 60 * 1000),
-        source: 'fallback',
-      };
-    }
-  }
-  return methodsCache.data;
+      otpRequired: op.otpRequired,
+      ussdCode: op.ussdCode,
+      redirect: op.redirect,
+    })),
+  }));
 }
 
 function findMethod(countries, countryCode, operatorSlug) {
@@ -160,41 +120,22 @@ function fullInternationalPhone(countryCode, digitsOnly) {
   return rule && rule.dialCode ? `${rule.dialCode}${digitsOnly}` : digitsOnly;
 }
 
-function webhookUrlFor(name) {
-  return `${config.sebpay.publicBaseUrl}/api/webhook/sebpay/${name}`;
-}
-
 // Liste des pays et opérateurs Mobile Money pris en charge (pour peupler le
 // formulaire côté front-end — expéditeur ET destinataire —, sans exposer de
 // clé API côté client).
-async function methodsHandler(req, res) {
-  try {
-    const data = await getMethods();
-    const enriched = data.map((country) => ({
-      ...country,
-      phoneRule: getPhoneRule(country.code),
-    }));
-    return res.json({
-      success: true,
-      source: methodsCache.source || 'sebpay',
-      degraded: methodsCache.source === 'fallback',
-      data: enriched,
-    });
-  } catch (error) {
-    console.error('Erreur récupération des opérateurs SebPay :', error.message);
-    const data = config.fallbackCountries().map((country) => ({
-      ...country,
-      phoneRule: getPhoneRule(country.code),
-    }));
-    return res.json({ success: true, source: 'fallback', degraded: true, data });
-  }
+function methodsHandler(req, res) {
+  const data = getMethods().map((country) => ({
+    ...country,
+    phoneRule: getPhoneRule(country.code),
+  }));
+  return res.json({ success: true, source: 'catalog', degraded: false, data });
 }
 
 app.get('/api/methods', methodsHandler);
 // Alias historique : certaines versions du front appelaient /api/countries.
 app.get('/api/countries', methodsHandler);
 
-// --- Étape 1 : créer le transfert et lancer la COLLECTION chez l'expéditeur
+// --- Étape 1 : créer le transfert et lancer le PAYIN chez l'expéditeur ----
 app.post('/api/transfer', async (req, res) => {
   const {
     senderPhone, senderName, senderCountryCode, senderOperator, otpCode,
@@ -215,7 +156,7 @@ app.post('/api/transfer', async (req, res) => {
   }
 
   try {
-    const countries = await getMethods();
+    const countries = getMethods();
 
     const senderMatch = findMethod(countries, senderCountryCode, senderOperator);
     if (!senderMatch) {
@@ -278,30 +219,35 @@ app.post('/api/transfer', async (req, res) => {
     };
     transfers.set(transferId, transfer);
 
-    const collectionResult = await sebpay.initiateCollection({
+    const [firstName, ...rest] = String(senderName).trim().split(/\s+/);
+    const collectionResult = await feexpay.initiateCollection({
+      countryCode: senderCountryCode.toUpperCase(),
+      operatorSlug: senderOperator,
       amount,
-      currency,
       phone: fullInternationalPhone(senderCountryCode, senderPhoneCheck.digitsOnly),
-      operator: senderOperator,
-      country: senderCountryCode.toUpperCase(),
-      externalReference: transferId,
-      callbackUrl: webhookUrlFor('collection'),
+      firstName,
+      lastName: rest.join(' ') || undefined,
+      description: 'Transfert Kouame Paiement',
+      callbackInfo: transferId,
       otpCode,
+      returnUrl: `${config.feexpay.publicBaseUrl}/success.html?transferId=${transferId}`,
+      cancelUrl: `${config.feexpay.publicBaseUrl}/?transferId=${transferId}`,
     });
 
-    transfer.collectionId = collectionResult.transaction_id;
+    transfer.collectionId = collectionResult.reference;
 
     return res.json({
       success: true,
       transferId,
-      // Présent uniquement pour certains opérateurs (ex : Wave) : à ouvrir
-      // dans un NOUVEL ONGLET, conformément à la doc SebPay. Absent sinon :
-      // l'expéditeur valide directement sur son téléphone (USSD/notification).
-      paymentUrl: collectionResult.provider_link || null,
+      // Présent uniquement pour les réseaux à redirection (Orange, Wave,
+      // Moov Côte d'Ivoire...) : à ouvrir dans un NOUVEL ONGLET. Absent
+      // sinon : l'expéditeur reçoit directement une demande
+      // USSD/notification sur son téléphone.
+      paymentUrl: collectionResult.paymentUrl,
       message: collectionResult.message || 'Demande de paiement envoyée à l\'expéditeur.',
     });
   } catch (error) {
-    console.error('Erreur création transfert (collection) :', error.message, error.raw || '');
+    console.error('Erreur création transfert (payin) :', error.message, error.raw || '');
     return res.status(400).json({
       success: false,
       message: error.message,
@@ -311,10 +257,9 @@ app.post('/api/transfer', async (req, res) => {
 });
 
 // --- Étape 2 : suivi (polling) d'un transfert par le front-end ----------
-// Filet de sécurité : si l'état est encore "pending" et n'a pas bougé
-// depuis un moment, on revérifie directement auprès de SebPay, au cas où un
-// webhook aurait été manqué (la doc SebPay présente le webhook comme le
-// mécanisme principal et le polling comme un complément).
+// On revérifie toujours directement auprès de FeexPay (source de vérité),
+// que ce soit en secours d'un webhook manqué, ou en l'absence de
+// configuration de webhook côté dashboard.
 app.get('/api/transfer/:transferId', async (req, res) => {
   const transfer = transfers.get(req.params.transferId);
   if (!transfer) {
@@ -323,27 +268,16 @@ app.get('/api/transfer/:transferId', async (req, res) => {
 
   try {
     if (transfer.stage === 'collection_pending' && transfer.collectionId) {
-      const status = await sebpay.getCollection(transfer.collectionId);
-      if (status.status === 'approved') {
-        await triggerPayout(transfer);
-      } else if (status.status === 'rejected') {
-        transfer.stage = 'collection_failed';
-        transfer.message = "Le paiement de l'expéditeur a échoué ou a été refusé.";
-      }
+      const status = await feexpay.getCollectionStatus(transfer.collectionId);
+      await applyCollectionStatus(transfer, status.status);
     } else if (transfer.stage === 'payout_pending' && transfer.payoutId) {
-      const status = await sebpay.getPayout(transfer.payoutId);
-      if (status.status === 'approved') {
-        transfer.stage = 'completed';
-        transfer.message = 'Transfert terminé avec succès.';
-      } else if (status.status === 'rejected') {
-        transfer.stage = 'payout_failed';
-        transfer.message = "Paiement reçu chez l'expéditeur, mais l'envoi au destinataire a échoué. Contactez le support.";
-      }
+      const status = await feexpay.getPayoutStatus(transfer.payoutId);
+      applyPayoutStatus(transfer, status.status);
     }
   } catch (error) {
-    // On ignore silencieusement une erreur de revérification : le webhook
-    // reste la source de vérité principale, ce polling n'est qu'un filet.
-    console.warn('Revérification SebPay échouée pour', transfer.transferId, ':', error.message);
+    // On ignore silencieusement une erreur de revérification : le prochain
+    // polling (ou webhook) réessaiera.
+    console.warn('Revérification FeexPay échouée pour', transfer.transferId, ':', error.message);
   }
 
   return res.json({ success: true, transfer });
@@ -353,78 +287,76 @@ async function triggerPayout(transfer) {
   transfer.stage = 'payout_pending';
   transfer.message = 'Paiement reçu, envoi au destinataire en cours...';
 
-  const payoutResult = await sebpay.initiatePayout({
-    recipientName: transfer.recipient.name,
+  const payoutResult = await feexpay.initiatePayout({
+    countryCode: transfer.recipient.countryCode.toUpperCase(),
+    operatorSlug: transfer.recipient.withdrawMode,
     phone: fullInternationalPhone(transfer.recipient.countryCode, transfer.recipient.phone),
-    operator: transfer.recipient.withdrawMode,
-    country: transfer.recipient.countryCode.toUpperCase(),
     amount: transfer.recipient.amount,
-    currency: transfer.recipient.currency,
-    externalReference: transfer.transferId,
-    callbackUrl: webhookUrlFor('payout'),
-    description: `Transfert Kouamé Paiement ${transfer.transferId}`,
+    motif: 'Transfert Kouame Paiement',
+    callbackInfo: transfer.transferId,
   });
 
-  transfer.payoutId = payoutResult.transaction_id;
+  transfer.payoutId = payoutResult.reference;
 }
 
-// --- Webhook COLLECTION : encaissement chez l'expéditeur ------------------
-app.post('/api/webhook/sebpay/collection', (req, res) => {
-  const signature = req.get('X-SebPay-Signature');
-  if (!sebpay.verifyWebhookSignature(req.rawBody, signature)) {
-    console.warn('Webhook SebPay (collection) : signature invalide, requête ignorée.');
-    return res.sendStatus(401);
-  }
-
-  // Répondre 200 immédiatement ; le reste du traitement continue ensuite.
-  res.sendStatus(200);
-
-  const body = req.body || {};
-  console.log('Webhook SebPay (collection) reçu :', body);
-
-  const { external_reference: transferId, status } = body;
-  const transfer = transferId ? transfers.get(transferId) : null;
-  if (!transfer) return; // référence inconnue
-
-  if (status === 'approved') {
-    // L'argent est encaissé chez l'expéditeur : on déclenche le PAYOUT.
-    triggerPayout(transfer).catch((err) => {
-      console.error('Erreur déclenchement payout après collection :', err.message);
+// Applique un statut de PAYIN (SUCCESSFUL / FAILED / PENDING) à un
+// transfert, et déclenche le payout si nécessaire.
+async function applyCollectionStatus(transfer, status) {
+  if (transfer.stage !== 'collection_pending') return; // déjà traité
+  if (status === 'SUCCESSFUL') {
+    await triggerPayout(transfer).catch((err) => {
+      console.error('Erreur déclenchement payout après payin :', err.message);
       transfer.stage = 'payout_failed';
       transfer.message = "Paiement reçu, mais l'envoi au destinataire n'a pas pu être lancé. Contactez le support.";
     });
-  } else if (status === 'rejected') {
+  } else if (status === 'FAILED') {
     transfer.stage = 'collection_failed';
     transfer.message = "Le paiement de l'expéditeur a échoué ou a été refusé.";
-  } else {
-    transfer.stage = 'collection_pending';
-    transfer.message = 'Paiement en cours de traitement...';
-  }
-});
+  } // PENDING / IN PENDING STATE -> rien à faire, on reste en attente
+}
 
-// --- Webhook PAYOUT : envoi vers le destinataire ---------------------------
-app.post('/api/webhook/sebpay/payout', (req, res) => {
-  const signature = req.get('X-SebPay-Signature');
-  if (!sebpay.verifyWebhookSignature(req.rawBody, signature)) {
-    console.warn('Webhook SebPay (payout) : signature invalide, requête ignorée.');
-    return res.sendStatus(401);
-  }
+// Applique un statut de PAYOUT (SUCCESSFUL / FAILED / PENDING) à un transfert.
+function applyPayoutStatus(transfer, status) {
+  if (transfer.stage !== 'payout_pending') return; // déjà traité
+  if (status === 'SUCCESSFUL') {
+    transfer.stage = 'completed';
+    transfer.message = 'Transfert terminé avec succès.';
+  } else if (status === 'FAILED') {
+    transfer.stage = 'payout_failed';
+    transfer.message = "Paiement reçu chez l'expéditeur, mais l'envoi au destinataire a échoué. Contactez le support pour un remboursement ou une nouvelle tentative.";
+  } // PENDING -> rien à faire, on reste en attente
+}
 
+// --- Webhook FeexPay (payin ET payout partagent la même URL) -------------
+// ⚠️ FeexPay ne signe pas ses webhooks (pas d'équivalent du
+// X-SebPay-Signature de l'ancien fournisseur). On répond 200 immédiatement,
+// puis on utilise le webhook UNIQUEMENT comme un déclencheur : le statut
+// annoncé dans son corps n'est jamais appliqué tel quel, on revérifie
+// toujours via un appel authentifié à FeexPay (getCollectionStatus /
+// getPayoutStatus) avant de faire progresser le transfert.
+app.post('/api/webhook/feexpay', (req, res) => {
   res.sendStatus(200);
 
   const body = req.body || {};
-  console.log('Webhook SebPay (payout) reçu :', body);
+  console.log('Webhook FeexPay reçu :', body);
 
-  const { external_reference: transferId, status } = body;
-  const transfer = transferId ? transfers.get(transferId) : null;
+  const reference = feexpay.extractWebhookReference(body);
+  const transferId = body.callback_info;
+  if (!reference && !transferId) return; // rien d'exploitable
+
+  const transfer = transferId
+    ? transfers.get(transferId)
+    : Array.from(transfers.values()).find((t) => t.collectionId === reference || t.payoutId === reference);
   if (!transfer) return; // référence inconnue
 
-  if (status === 'approved') {
-    transfer.stage = 'completed';
-    transfer.message = 'Transfert terminé avec succès.';
-  } else if (status === 'rejected') {
-    transfer.stage = 'payout_failed';
-    transfer.message = "Paiement reçu chez l'expéditeur, mais l'envoi au destinataire a échoué ou a été refusé. Contactez le support pour un remboursement ou une nouvelle tentative.";
+  if (transfer.stage === 'collection_pending' && transfer.collectionId) {
+    feexpay.getCollectionStatus(transfer.collectionId)
+      .then((status) => applyCollectionStatus(transfer, status.status))
+      .catch((err) => console.warn('Revérification payin (webhook) échouée :', err.message));
+  } else if (transfer.stage === 'payout_pending' && transfer.payoutId) {
+    feexpay.getPayoutStatus(transfer.payoutId)
+      .then((status) => applyPayoutStatus(transfer, status.status))
+      .catch((err) => console.warn('Revérification payout (webhook) échouée :', err.message));
   }
 });
 

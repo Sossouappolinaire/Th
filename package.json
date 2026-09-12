@@ -1,7 +1,7 @@
 {
   "name": "kouame-paiement",
   "version": "1.0.0",
-  "description": "Kouamé Paiement — Réseau vers autre : transfert d'argent Mobile Money vers un autre réseau, via l'API SebPay (collections + payouts)",
+  "description": "Kouamé Paiement — Réseau vers autre : transfert d'argent Mobile Money vers un autre réseau, via l'API FeexPay (payin + payout)",
   "main": "server.js",
   "engines": {
     "node": ">=18"

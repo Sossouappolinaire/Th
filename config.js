@@ -1,19 +1,23 @@
 // config.js
-// Centralise la configuration liée à l'API SebPay (Collections =
-// encaissement chez l'expéditeur, Payouts = envoi vers le destinataire).
+// Centralise la configuration liée à l'API FeexPay (Payin = collecte chez
+// l'expéditeur, Payout = envoi vers le destinataire).
 //
-// ⚠️ À la demande explicite du propriétaire du projet, les clés API sont
-// codées EN DUR ci-dessous plutôt que lues depuis des variables
-// d'environnement. Conséquences à connaître :
+// ⚠️ FeexPay utilise UNE SEULE clé API (Authorization: Bearer fp_...), à
+// la différence de l'ancien fournisseur (SebPay) qui utilisait une paire
+// clé publique / clé secrète. Il faut aussi fournir l'identifiant de
+// boutique (`shop`) sur CHAQUE requête Payin/Payout.
+//
+// ⚠️ À la demande explicite du propriétaire du projet, la clé API et
+// l'identifiant de boutique sont codés EN DUR ci-dessous plutôt que lus
+// uniquement depuis des variables d'environnement. Conséquences à connaître :
 //   - Quiconque a accès à ce fichier (dépôt Git, zip partagé, capture
-//     d'écran...) a accès à votre clé secrète SebPay, donc à votre wallet.
+//     d'écran...) a accès à votre clé API FeexPay, donc à votre wallet.
 //   - Si ce dossier est poussé sur un dépôt Git PUBLIC, la clé sera visible
 //     de tous, y compris dans l'historique même après suppression ultérieure.
-//   - process.env.SEBPAY_PUBLIC_KEY / SEBPAY_SECRET_KEY restent lus en
-//     priorité s'ils sont définis (ex : sur Render), pour permettre de
-//     revenir à la méthode par variables d'environnement sans retoucher ce
-//     fichier — mais par défaut, ce sont les valeurs codées en dur ci-dessous
-//     qui s'appliquent.
+//   - process.env.FEEXPAY_API_KEY / FEEXPAY_SHOP_ID restent lus en priorité
+//     s'ils sont définis (ex : sur Render), pour permettre de revenir à la
+//     méthode par variables d'environnement sans retoucher ce fichier — mais
+//     par défaut, ce sont les valeurs codées en dur ci-dessous qui s'appliquent.
 
 require('dotenv').config();
 
@@ -21,20 +25,25 @@ const config = {
   // Port sur lequel le serveur Express écoute.
   port: process.env.PORT || 10000,
 
-  sebpay: {
-    // URL de base de l'API SebPay (voir la documentation fournie).
-    baseUrl: process.env.SEBPAY_BASE_URL || 'https://newapi.sebpay.bj/api/v1',
+  feexpay: {
+    // URL de base de l'API FeexPay v2 (voir la documentation fournie).
+    baseUrl: process.env.FEEXPAY_BASE_URL || 'https://api-v2.feexpay.me/api',
 
-    // Clé publique (pk_live_...) — identifie le compte SebPay.
-    publicKey: process.env.SEBPAY_PUBLIC_KEY || 'pk_live_KZXk20YFXuETMvvo7B5TZEoybXLtsopBZWKjEPyN',
+    // Clé API (fp_live_... en production, test_... en mode sandbox) —
+    // envoyée en Authorization: Bearer <apiKey> sur chaque requête.
+    // ⚠️ Cette clé donne un accès complet au wallet FeexPay du compte.
+    apiKey: process.env.FEEXPAY_API_KEY || 'fp_TgztQYTEsitJDPfSRKPJxrUASUtAcXSiX1Juk1ig3tDTFwtBFtAJyG4KgKJ0LLp6',
 
-    // Clé secrète (sk_live_...) — sert à signer les requêtes ET à vérifier
-    // la signature HMAC-SHA256 des webhooks entrants.
-    // ⚠️ Cette clé donne un accès complet au wallet SebPay du compte.
-    secretKey: process.env.SEBPAY_SECRET_KEY || 'sk_live_w6OsteIR8i0Q4mQImeN67irPGUtCSjbYAk6VU6fbpX1lch4ULPrdr5dcD8zt',
+    // Identifiant de la boutique (menu Développeurs > Boutiques du dashboard
+    // FeexPay) — requis dans le corps de CHAQUE requête Payin/Payout.
+    shopId: process.env.FEEXPAY_SHOP_ID || 'zKl514PGtGduCPu',
 
-    // URL publique de ce service, utilisée pour construire les callback_url
-    // envoyées à SebPay (ex : https://votre-app.onrender.com).
+    // URL publique de ce service, utilisée pour construire les return_url /
+    // cancel_url (opérateurs à redirection : Orange, Wave, Moov CI, etc.) et
+    // pour afficher où configurer le webhook FeexPay (menu Webhook du
+    // dashboard — FeexPay n'accepte pas de callback_url par requête comme
+    // SebPay, l'URL de notification se configure une fois pour toutes côté
+    // dashboard).
     // Auto-détectée sur Render via RENDER_EXTERNAL_URL ; PUBLIC_BASE_URL
     // reste disponible pour la forcer manuellement (autre hébergeur, domaine
     // personnalisé, test local).
@@ -44,58 +53,19 @@ const config = {
   },
 };
 
-if (!config.sebpay.publicKey || !config.sebpay.secretKey) {
-  console.warn('⚠️  SEBPAY_PUBLIC_KEY et/ou SEBPAY_SECRET_KEY manquantes : les appels à l\'API SebPay échoueront tant qu\'elles ne sont pas définies.');
-}
-
-// --- Référentiel pays (nom + devise) --------------------------------------
-// SebPay renvoie dynamiquement les opérateurs disponibles par pays
-// (GET /operators), mais pas de nom de pays lisible ni de devise associée.
-// On garde donc ce petit référentiel statique en plus, uniquement pour
-// l'affichage et pour choisir la bonne devise — jamais pour la liste des
-// opérateurs elle-même, qui reste toujours interrogée en direct (voir
-// sebpayService.js), conformément à la documentation SebPay.
-const COUNTRY_META = {
-  bj: { name: 'Bénin', currency: 'XOF' },
-  ci: { name: "Côte d'Ivoire", currency: 'XOF' },
-  tg: { name: 'Togo', currency: 'XOF' },
-  bf: { name: 'Burkina Faso', currency: 'XOF' },
-  sn: { name: 'Sénégal', currency: 'XOF' },
-  ne: { name: 'Niger', currency: 'XOF' },
-  ml: { name: 'Mali', currency: 'XOF' },
-  gw: { name: 'Guinée-Bissau', currency: 'XOF' },
-  cm: { name: 'Cameroun', currency: 'XAF' },
-  ga: { name: 'Gabon', currency: 'XAF' },
-  cg: { name: 'Congo', currency: 'XAF' },
-  td: { name: 'Tchad', currency: 'XAF' },
-  cd: { name: 'R.D. Congo', currency: 'CDF' },
-  gn: { name: 'Guinée', currency: 'GNF' },
-  gm: { name: 'Gambie', currency: 'GMD' },
-  ng: { name: 'Nigéria', currency: 'NGN' },
-  gh: { name: 'Ghana', currency: 'GHS' },
-  ke: { name: 'Kenya', currency: 'KES' },
-  ug: { name: 'Ouganda', currency: 'UGX' },
-  tz: { name: 'Tanzanie', currency: 'TZS' },
-};
-
-function countryMeta(code) {
-  return COUNTRY_META[String(code).toLowerCase()] || null;
+if (!config.feexpay.apiKey || !config.feexpay.shopId) {
+  console.warn('⚠️  FEEXPAY_API_KEY et/ou FEEXPAY_SHOP_ID manquantes : les appels à l\'API FeexPay échoueront tant qu\'elles ne sont pas définies.');
 }
 
 // --- Vérification des variables d'environnement (utile juste après un ---
 // --- déploiement sur Render, pour confirmer que tout est bien chargé) ---
-// Les clés SebPay ont désormais une valeur par défaut codée en dur
-// ci-dessus : elles ne sont donc plus "required" au sens strict (l'app
-// démarre sans variable d'environnement définie), mais définir
-// SEBPAY_PUBLIC_KEY / SEBPAY_SECRET_KEY en environnement reste possible et
-// prend toujours le dessus sur la valeur codée en dur.
 const ENV_VARS = [
-  { key: 'SEBPAY_PUBLIC_KEY', required: false, note: 'clé publique SebPay (pk_...) — sinon, valeur codée en dur dans config.js utilisée' },
-  { key: 'SEBPAY_SECRET_KEY', required: false, note: 'clé secrète SebPay (sk_...) — sinon, valeur codée en dur dans config.js utilisée' },
-  { key: 'SEBPAY_BASE_URL', required: false, note: 'a une valeur par défaut correcte, à ne changer que si SebPay vous en donne une autre' },
+  { key: 'FEEXPAY_API_KEY', required: false, note: 'clé API FeexPay (fp_...) — sinon, valeur codée en dur dans config.js utilisée' },
+  { key: 'FEEXPAY_SHOP_ID', required: false, note: 'identifiant de boutique — sinon, valeur codée en dur dans config.js utilisée' },
+  { key: 'FEEXPAY_BASE_URL', required: false, note: 'a une valeur par défaut correcte, à ne changer que si FeexPay vous en donne une autre' },
   { key: 'PORT', required: false, note: 'fourni automatiquement par Render' },
   { key: 'RENDER_EXTERNAL_URL', required: false, note: "fournie automatiquement par Render (sert de PUBLIC_BASE_URL) ; absente en local ou hors Render, c'est normal" },
-  { key: 'PUBLIC_BASE_URL', required: false, note: 'à définir manuellement hors Render (autre hébergeur, domaine personnalisé, test local) pour que les callback_url SebPay soient correctes' },
+  { key: 'PUBLIC_BASE_URL', required: false, note: 'à définir manuellement hors Render (autre hébergeur, domaine personnalisé, test local) pour que les return_url/cancel_url FeexPay soient correctes' },
 ];
 
 /**
@@ -114,7 +84,7 @@ function checkEnvVars() {
   return {
     ok: missingRequired.length === 0,
     missingRequired,
-    publicBaseUrlInUse: config.sebpay.publicBaseUrl,
+    publicBaseUrlInUse: config.feexpay.publicBaseUrl,
     vars,
   };
 }
@@ -138,77 +108,14 @@ function logEnvStatus() {
     console.log(`❌ Variables requises manquantes : ${report.missingRequired.join(', ')}`);
     console.log('   -> Sur Render : Dashboard du service > Environment > Add Environment Variable, puis redéployez.');
   }
-  console.log(`ℹ️  URL publique utilisée (callback_url) : ${report.publicBaseUrlInUse}`);
+  console.log(`ℹ️  URL publique utilisée (return_url/cancel_url) : ${report.publicBaseUrlInUse}`);
   if (report.publicBaseUrlInUse.startsWith('http://localhost')) {
-    console.log("   ⚠️  Ceci ressemble à une adresse locale — SebPay ne pourra pas vous notifier par webhook tant que ce service n'est pas exposé publiquement.");
+    console.log("   ⚠️  Ceci ressemble à une adresse locale — pensez à configurer l'URL de webhook dans le dashboard FeexPay avec une adresse publique une fois déployé.");
   }
   console.log('--- Fin de la vérification ---\n');
   return report;
 }
 
-
-// --- Normalisation des codes pays -----------------------------------------
-// SebPay peut renvoyer un code ISO-2 ("BJ"), ISO-3 ("BEN") ou un nom de pays
-// selon les opérateurs. On ramène tout vers notre code ISO-2 minuscule, sinon
-// des opérateurs valides étaient silencieusement ignorés (liste vide côté
-// formulaire -> "Pays indisponibles pour le moment").
-const COUNTRY_ALIASES = {
-  ben: 'bj', civ: 'ci', tgo: 'tg', bfa: 'bf', sen: 'sn', ner: 'ne', mli: 'ml',
-  gnb: 'gw', cmr: 'cm', gab: 'ga', cog: 'cg', tcd: 'td', cod: 'cd', gin: 'gn',
-  gmb: 'gm', nga: 'ng', gha: 'gh', ken: 'ke', uga: 'ug', tza: 'tz',
-  benin: 'bj', "cote d'ivoire": 'ci', "côte d'ivoire": 'ci', 'ivory coast': 'ci',
-  togo: 'tg', 'burkina faso': 'bf', senegal: 'sn', 'sénégal': 'sn', niger: 'ne',
-  mali: 'ml', 'guinea-bissau': 'gw', 'guinee-bissau': 'gw', cameroun: 'cm',
-  cameroon: 'cm', gabon: 'ga', congo: 'cg', tchad: 'td', chad: 'td',
-  'rd congo': 'cd', 'drc': 'cd', guinee: 'gn', 'guinée': 'gn', guinea: 'gn',
-  gambie: 'gm', gambia: 'gm', nigeria: 'ng', 'nigéria': 'ng', ghana: 'gh',
-  kenya: 'ke', ouganda: 'ug', uganda: 'ug', tanzanie: 'tz', tanzania: 'tz',
-};
-
-function normalizeCountryCode(raw) {
-  const value = String(raw || '').trim().toLowerCase();
-  if (!value) return null;
-  if (COUNTRY_META[value]) return value;
-  if (COUNTRY_ALIASES[value]) return COUNTRY_ALIASES[value];
-  return null;
-}
-
-// --- Catalogue de secours -------------------------------------------------
-// Utilisé UNIQUEMENT si l'appel direct GET /operators échoue ou ne renvoie
-// aucun opérateur exploitable (clé API restreinte par IP, panne SebPay...).
-// Le formulaire reste alors utilisable et affiche un avertissement, au lieu
-// d'un écran bloqué "Pays indisponibles pour le moment".
-const FALLBACK_OPERATORS = {
-  bj: [['mtn', 'MTN MoMo'], ['moov', 'Moov Money'], ['celtiis', 'Celtiis Cash']],
-  ci: [['orange', 'Orange Money'], ['mtn', 'MTN MoMo'], ['moov', 'Moov Money'], ['wave', 'Wave']],
-  tg: [['moov', 'Moov Money'], ['togocom', 'T-Money']],
-  bf: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
-  sn: [['orange', 'Orange Money'], ['wave', 'Wave'], ['free', 'Free Money']],
-  ml: [['orange', 'Orange Money'], ['moov', 'Moov Money']],
-  ne: [['airtel', 'Airtel Money'], ['moov', 'Moov Money']],
-  gn: [['orange', 'Orange Money'], ['mtn', 'MTN MoMo']],
-  cm: [['mtn', 'MTN MoMo'], ['orange', 'Orange Money']],
-  ga: [['airtel', 'Airtel Money'], ['moov', 'Moov Money']],
-  cg: [['mtn', 'MTN MoMo'], ['airtel', 'Airtel Money']],
-  cd: [['orange', 'Orange Money'], ['airtel', 'Airtel Money'], ['mtn', 'MTN MoMo']],
-  gh: [['mtn', 'MTN MoMo'], ['vodafone', 'Telecel Cash'], ['airteltigo', 'AirtelTigo Money']],
-};
-
-function fallbackCountries() {
-  return Object.keys(FALLBACK_OPERATORS).map((code) => ({
-    code,
-    country: COUNTRY_META[code].name,
-    currency: COUNTRY_META[code].currency,
-    paymentMethods: FALLBACK_OPERATORS[code].map(([key, name]) => ({
-      key, name, otpRequired: false, ussdCode: null,
-    })),
-  }));
-}
-
 module.exports = config;
-module.exports.countryMeta = countryMeta;
-module.exports.normalizeCountryCode = normalizeCountryCode;
-module.exports.fallbackCountries = fallbackCountries;
-module.exports.COUNTRY_META = COUNTRY_META;
 module.exports.checkEnvVars = checkEnvVars;
 module.exports.logEnvStatus = logEnvStatus;

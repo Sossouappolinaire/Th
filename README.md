@@ -1,65 +1,70 @@
 # Kouamé Paiement — Réseau vers autre
 
-> ⚠️ **Sécurité — clés API codées en dur.** À la demande du propriétaire du
-> projet, les clés SebPay sont écrites directement dans `config.js` plutôt
-> que fournies via des variables d'environnement. Cela signifie que
-> **quiconque obtient ce dossier (dépôt Git, zip, capture d'écran...) peut
-> utiliser votre wallet SebPay.** Ne poussez jamais ce dossier tel quel sur
-> un dépôt **public**, et ne le partagez qu'avec des personnes de confiance.
-> Pour revenir à la méthode plus sûre (variables d'environnement, clés hors
-> du code), voir `.env.example` — `config.js` continue de lire
-> `SEBPAY_PUBLIC_KEY` / `SEBPAY_SECRET_KEY` en priorité si elles sont
-> définies en environnement.
+> ⚠️ **Sécurité — clé API.** Contrairement à une version précédente de ce
+> projet, la clé API **n'est plus codée en dur** : `config.js` la lit
+> uniquement depuis les variables d'environnement `FEEXPAY_API_KEY` /
+> `FEEXPAY_SHOP_ID` (voir `.env.example`). Ne commitez jamais votre fichier
+> `.env` réel, et ne poussez jamais une clé API sur un dépôt public.
 
 Application Node.js/Express qui permet un **vrai transfert réseau → réseau** :
-on encaisse l'argent chez l'expéditeur (**Collection**), puis on l'envoie
-automatiquement au destinataire (**Payout**), via l'API **SebPay**.
+on encaisse l'argent chez l'expéditeur (**Payin**), puis on l'envoie
+automatiquement au destinataire (**Payout**), via l'API **FeexPay v2**.
 
 La liste des pays et opérateurs disponibles (pour l'expéditeur **et** le
-destinataire) est récupérée **dynamiquement** depuis `GET /operators` : aucune
-liste codée en dur, conformément à la doc SebPay (le champ `otp_required`
-peut évoluer).
+destinataire) vient d'un **catalogue statique** (`feexpayCatalog.js`) :
+FeexPay, à la différence de l'ancien fournisseur, n'expose aucune route pour
+lister ses réseaux en direct — chaque réseau correspond à un endpoint dédié
+et fixe (ex. `/transactions/public/requesttopay/mtn_ci`), documenté pays par
+pays / réseau par réseau. Un réseau n'apparaît dans ce catalogue que s'il est
+pris en charge à la fois en Payin (pour servir d'expéditeur) et en Payout
+(pour servir de destinataire).
 
-## Fonctionnement (Collection → webhook → Payout)
+## Fonctionnement (Payin → webhook/revérification → Payout)
 
-1. Le front-end charge `/api/methods` (proxy vers SebPay) pour peupler les
+1. Le front-end charge `/api/methods` (catalogue statique) pour peupler les
    listes déroulantes Pays → Réseau, à la fois pour l'**expéditeur** et le
    **destinataire**.
 2. `POST /api/transfer` valide les données puis appelle
-   `POST /collections` de SebPay pour encaisser l'**expéditeur** : celui-ci
-   reçoit une demande de paiement directement sur son téléphone (USSD ou
-   notification). Pour certains opérateurs (ex. Wave), SebPay renvoie un
-   `provider_link` : le front-end l'ouvre alors dans un **nouvel onglet**.
-3. Pour les opérateurs qui l'exigent (Orange CI/BF/SN…), un **code OTP** est
-   demandé avant l'appel : l'utilisateur compose le code USSD indiqué
-   (`ussd_code`, renvoyé par `GET /operators`) et saisit le code reçu.
-4. SebPay notifie le résultat via `POST /api/webhook/sebpay/collection`
-   (`status: approved / rejected / pending`), signé HMAC-SHA256
-   (`X-SebPay-Signature`, vérifié avec `SEBPAY_SECRET_KEY`).
-5. Dès que la collection est `approved`, le serveur déclenche automatiquement
-   le **Payout** (`POST /payouts`) vers le destinataire.
-6. SebPay notifie l'issue finale via `POST /api/webhook/sebpay/payout`
-   (même mécanisme de signature).
-7. Le front-end (`index.html`) interroge `GET /api/transfer/:transferId`
+   `POST /transactions/public/requesttopay/{réseau}` de FeexPay pour
+   encaisser l'**expéditeur**. Selon le réseau :
+   - la plupart des réseaux envoient directement une demande de paiement sur
+     le téléphone de l'expéditeur (USSD ou notification) ;
+   - les réseaux **à redirection** (Orange, Wave, Moov Côte d'Ivoire...)
+     renvoient un `payment_url` : le front-end l'ouvre alors dans un
+     **nouvel onglet**.
+3. Pour Orange Burkina Faso (seul réseau concerné à ce jour), un **code
+   OTP** est demandé avant l'appel : l'utilisateur compose le code USSD
+   indiqué (`#144*4*6*montant#`) et saisit le code reçu.
+4. FeexPay peut notifier le résultat via un **webhook** (`POST
+   /api/webhook/feexpay`) — mais **FeexPay ne signe pas ses webhooks**
+   (pas d'équivalent du HMAC de l'ancien fournisseur). Le serveur ne fait
+   donc **jamais confiance au contenu du webhook lui-même** : il ne sert que
+   de déclencheur pour aller revérifier le statut réel via un appel
+   authentifié (`Authorization: Bearer <clé API>`) directement auprès de
+   FeexPay (`GET /transactions/public/single/status/{reference}` ou
+   `GET /payouts/status/public/{reference}`).
+5. Dès que le payin est confirmé `SUCCESSFUL`, le serveur déclenche
+   automatiquement le **Payout** vers le destinataire.
+6. Le front-end (`index.html`) interroge `GET /api/transfer/:transferId`
    toutes les 3 s jusqu'à un statut final :
    - `completed` — le destinataire a bien été crédité. Redirection vers
      **`success.html?transferId=...`**, qui revérifie l'état auprès du
      serveur avant d'afficher la confirmation ;
    - `collection_failed` — l'expéditeur n'a pas payé (rien n'a été prélevé) ;
    - `payout_failed` — **cas à surveiller** : l'expéditeur a payé mais
-     l'envoi au destinataire a échoué. Selon la doc SebPay, le montant est
-     alors remboursé **automatiquement sur votre wallet marchand** — pas
-     directement à l'expéditeur : prévoyez un remboursement, une nouvelle
-     tentative ou un suivi manuel pour ce cas.
+     l'envoi au destinataire a échoué. Prévoyez un remboursement, une
+     nouvelle tentative ou un suivi manuel pour ce cas.
 
-En secours (si un webhook est manqué), `GET /api/transfer/:transferId`
-revérifie aussi directement l'état auprès de SebPay (`GET /collections/{id}`
-ou `GET /payouts/{id}`) tant que le transfert reste "pending".
+En secours (webhook manqué, ou webhook non configuré côté dashboard),
+`GET /api/transfer/:transferId` revérifie aussi directement l'état auprès de
+FeexPay tant que le transfert reste en `PENDING`. Sur la V2 de l'API FeexPay,
+un payout renvoie d'ailleurs toujours `PENDING` au lancement : le statut
+final s'obtient systématiquement via cette revérification.
 
 ⚠️ Le stockage des transferts en cours est fait en mémoire (`Map`) : il est
 perdu à chaque redémarrage du service. Pour de la production, remplacez-le
 par une vraie base de données — c'est d'autant plus important que c'est ce
-qui relie le webhook de collection au payout à déclencher.
+qui relie le webhook/la revérification de payin au payout à déclencher.
 
 ⚠️ **Aucune conversion de devise** n'est effectuée : un transfert n'est
 autorisé que si le pays de l'expéditeur et celui du destinataire partagent
@@ -69,31 +74,38 @@ serveur.
 
 ## Réseaux, OTP et validation des numéros
 
-- Les **pays et opérateurs** affichés dans le formulaire sont récupérés en
-  direct depuis SebPay (`GET /operators`) — tout opérateur ajouté ou dont le
-  statut `otp_required` change côté SebPay est reflété automatiquement
-  (cache de 5 minutes), sans modification du code.
+- Les **pays et opérateurs** affichés dans le formulaire viennent du
+  catalogue statique `feexpayCatalog.js`, recroisé avec la documentation
+  FeexPay v2 (Payin **et** Payout, pays par pays / réseau par réseau). Si
+  FeexPay ajoute ou retire un réseau, ce fichier doit être mis à jour à la
+  main (pas de liste dynamique côté FeexPay).
 - Chaque réseau (MTN, Orange, Moov, Wave…) est représenté par un **badge
   coloré généré côté client** (pas les logos officiels des marques, pour des
   raisons de droits d'usage).
-- Le **nom du pays et la devise** associés à chaque code pays (ex. `bj` →
-  Bénin / XOF) viennent d'un petit référentiel statique dans `config.js`
-  (`COUNTRY_META`), car l'API SebPay ne renvoie pas ces informations —
-  uniquement la liste des opérateurs.
+- Le **nom du pays et la devise** associés à chaque code pays viennent du
+  même catalogue statique.
 - Le **nombre de chiffres attendu par numéro** est vérifié (côté formulaire
-  **et** côté serveur, dans `phoneRules.js`) pour les pays dont le plan de
-  numérotation a pu être confirmé auprès de sources fiables (Côte d'Ivoire,
-  Bénin, Togo, Burkina Faso, Sénégal, Niger, Cameroun, Gabon, Mali). Pour les
-  autres pays pris en charge par SebPay, seul l'indicatif est connu ; une
-  validation générique (6 à 12 chiffres) s'applique.
+  **et** côté serveur, dans `phoneRules.js`) pour tous les pays du
+  catalogue (Côte d'Ivoire, Bénin, Togo, Burkina Faso, Sénégal, Mali, Congo
+  Brazzaville).
 
-## Prérequis côté dashboard SebPay
+## Prérequis côté dashboard FeexPay
 
-1. **Récupérez vos clés API** (`X-Public-Key` / `X-Secret-Key`) depuis votre
-   tableau de bord SebPay et renseignez-les dans `SEBPAY_PUBLIC_KEY` /
-   `SEBPAY_SECRET_KEY`.
-2. Assurez-vous que votre **wallet SebPay** dispose d'un solde suffisant :
-   un payout déduit immédiatement le montant + les frais de votre wallet.
+1. **Créez un compte** et faites-le **valider** (nécessaire pour la
+   production).
+2. **Récupérez votre clé API** (`fp_live_...`) dans le menu **Développeurs**,
+   et l'**identifiant de votre boutique** dans le menu **Boutiques** —
+   renseignez-les dans `FEEXPAY_API_KEY` / `FEEXPAY_SHOP_ID`.
+3. **Configurez l'URL de webhook** dans le menu **Webhook** du dashboard :
+   `https://votre-service.onrender.com/api/webhook/feexpay` (FeexPay
+   n'accepte pas de `callback_url` par requête, contrairement à l'ancien
+   fournisseur : l'URL se configure une fois pour toutes ici).
+4. Pour les réseaux **Wave**, activez d'abord votre compte Wave via le menu
+   dédié du dashboard FeexPay avant de pouvoir l'utiliser en Payin.
+5. Assurez-vous que votre **wallet FeexPay** dispose d'un solde suffisant :
+   un payout déduit immédiatement le montant de votre wallet.
+6. Les montants sont encadrés par FeexPay : Payin entre 100 et 2 000 000
+   XOF ; Payout à partir de 50 ou 100 XOF selon le réseau.
 
 ## Déploiement sur Render.com
 
@@ -106,16 +118,18 @@ serveur.
 4. Dans l'onglet **Environment**, ajoutez les variables :
    | Clé | Valeur |
    |---|---|
-   | `SEBPAY_PUBLIC_KEY` | votre clé publique (dashboard SebPay) |
-   | `SEBPAY_SECRET_KEY` | votre clé secrète (dashboard SebPay) |
-   | `SEBPAY_BASE_URL` | `https://newapi.sebpay.bj/api/v1` |
+   | `FEEXPAY_API_KEY` | votre clé API (dashboard FeexPay, menu Développeurs) |
+   | `FEEXPAY_SHOP_ID` | votre identifiant de boutique (dashboard FeexPay, menu Boutiques) |
+   | `FEEXPAY_BASE_URL` | `https://api-v2.feexpay.me/api` |
 
    Inutile d'ajouter `PUBLIC_BASE_URL` : Render fournit automatiquement
    `RENDER_EXTERNAL_URL` (utilisée comme URL publique pour les
-   `callback_url`). N'ajoutez cette variable que pour forcer une valeur
-   précise (domaine personnalisé, test hors Render).
+   `return_url`/`cancel_url`). N'ajoutez cette variable que pour forcer une
+   valeur précise (domaine personnalisé, test hors Render).
 5. Déployez. Render assigne automatiquement `PORT` (le service écoute
    dessus, avec `10000` comme valeur de repli si non fournie).
+6. Une fois déployé, allez configurer l'URL de webhook dans le dashboard
+   FeexPay (voir section précédente) avec l'URL Render obtenue.
 
 ## Vérifier que les variables d'environnement sont bien chargées
 
@@ -139,48 +153,29 @@ npm start
 # -> http://localhost:10000
 ```
 
-⚠️ En local, SebPay ne pourra pas atteindre vos webhooks (`callback_url`)
-tant que ce service n'est pas exposé publiquement (ex. via un tunnel type
-ngrok) — le suivi de secours (`GET /api/transfer/:id` qui revérifie
-directement auprès de SebPay) permet néanmoins de tester le flux complet.
+⚠️ En local, FeexPay ne pourra pas atteindre votre webhook tant que ce
+service n'est pas exposé publiquement (ex. via un tunnel type ngrok) — le
+suivi de secours (`GET /api/transfer/:id`, qui revérifie directement auprès
+de FeexPay) permet néanmoins de tester le flux complet sans webhook.
 
 ## Structure du projet
 
 ```
-fusionpay-transfert/
-├── server.js         # routes Express + orchestration collection -> webhook -> payout
-├── sebpayService.js  # appels aux API Collections ET Payouts de SebPay + vérif. signature webhook
-├── config.js          # variables d'environnement + référentiel pays (nom/devise)
-├── phoneRules.js      # longueur de numéro attendue par pays (+ indicatifs)
+kouame-paiement/
+├── server.js            # routes Express + orchestration payin -> webhook/revérification -> payout
+├── feexpayService.js    # appels aux API Payin ET Payout de FeexPay + statut
+├── feexpayCatalog.js    # catalogue statique pays/réseaux <-> endpoints FeexPay
+├── config.js            # variables d'environnement (clé API, shop ID, URL publique)
+├── phoneRules.js        # longueur de numéro attendue par pays (+ indicatifs)
 ├── public/
-│   ├── index.html     # formulaire (5 étapes) + suivi collection/payout en direct
-│   ├── success.html   # page de confirmation finale (après redirection)
-│   ├── success.js     # revérifie l'état auprès du serveur avant d'afficher le succès
+│   ├── index.html       # formulaire (5 étapes) + suivi payin/payout en direct
+│   ├── success.html     # page de confirmation finale (après redirection)
+│   ├── success.js       # revérifie l'état auprès du serveur avant d'afficher le succès
 │   ├── style.css
 │   └── app.js
 ├── package.json
 └── .env.example
 ```
-
-## Correctif — « Impossible de charger la liste des pays »
-
-Cause : l'appel direct `GET /operators` de SebPay renvoyait
-`IP_NOT_ALLOWED` (« Cette adresse IP n'est pas autorisée à utiliser cette clé
-API ») ou une liste vide. Le formulaire restait alors bloqué sur « Pays
-indisponibles pour le moment ».
-
-Corrections apportées :
-
-1. Les codes pays renvoyés par SebPay sont désormais normalisés (ISO-2, ISO-3
-   ou nom de pays) : plus aucun opérateur valide n'est ignoré silencieusement.
-2. Si SebPay est injoignable ou ne renvoie aucun opérateur, un **catalogue de
-   secours** (`config.js` → `FALLBACK_OPERATORS`) alimente le formulaire, avec
-   un avertissement visible. `/api/methods` ne renvoie plus d'erreur 502.
-3. `/api/countries` existe en alias de `/api/methods`.
-
-Pour retrouver la liste **temps réel** de SebPay : dans le tableau de bord
-SebPay, autorisez l'adresse IP sortante de votre service Render pour cette clé
-API (whitelist IP), puis redéployez.
 
 ## Nouveautés
 
